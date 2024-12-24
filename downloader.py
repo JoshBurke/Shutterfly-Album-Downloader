@@ -5,12 +5,18 @@ from urllib.parse import urlencode
 from pathlib import Path
 import json
 import base64
+from datetime import datetime, timedelta
+import random
+
+class TokenExpiredError(Exception):
+    pass
 
 class ShutterflyDownloader:
-    def __init__(self, access_token, output_dir="downloads", rate_limit_delay=1.0):
+    def __init__(self, access_token, output_dir="downloads", rate_limit_delay=1.0, max_retries=3):
         self.access_token = access_token
         self.output_dir = Path(output_dir)
         self.rate_limit_delay = rate_limit_delay
+        self.max_retries = max_retries
         self.session = requests.Session()
         self.session.headers.update({
             'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -18,22 +24,70 @@ class ShutterflyDownloader:
             'referer': 'https://photos.shutterfly.com/'
         })
         
+        # Parse token expiration
+        token_parts = self.access_token.split('.')
+        self.claims = json.loads(base64.b64decode(token_parts[1] + '=' * (-len(token_parts[1]) % 4)))
+        self.token_expiry = datetime.fromtimestamp(self.claims['exp'])
+        
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
+    def check_token_validity(self):
+        """Check if token is still valid"""
+        if datetime.now() >= self.token_expiry:
+            raise TokenExpiredError("Access token has expired")
+
+    def update_access_token(self, new_token):
+        """Update the access token and its expiration time"""
+        self.access_token = new_token
+        token_parts = self.access_token.split('.')
+        self.claims = json.loads(base64.b64decode(token_parts[1] + '=' * (-len(token_parts[1]) % 4)))
+        self.token_expiry = datetime.fromtimestamp(self.claims['exp'])
+        print("Access token updated successfully")
+
+    def make_request(self, method, url, **kwargs):
+        """Make a request with retry logic and exponential backoff"""
+        retry_count = 0
+        while retry_count <= self.max_retries:
+            try:
+                self.check_token_validity()
+                
+                if retry_count > 0:
+                    # Exponential backoff: 2^retry_count seconds
+                    wait_time = (2 ** retry_count) + (random.random() * 0.5)
+                    print(f"Retrying in {wait_time:.1f} seconds...")
+                    time.sleep(wait_time)
+                
+                response = getattr(self.session, method)(url, **kwargs)
+                response.raise_for_status()
+                
+                return response
+                
+            except TokenExpiredError:
+                print("\nAccess token has expired. Please provide a new token.")
+                new_token = input("Enter new access token: ").strip()
+                self.update_access_token(new_token)
+                retry_count -= 1  # Don't count token updates as retries
+                
+            except requests.exceptions.RequestException as e:
+                retry_count += 1
+                if retry_count <= self.max_retries:
+                    print(f"Request failed: {str(e)}")
+                else:
+                    raise Exception(f"Max retries exceeded: {str(e)}")
+            
+            except Exception as e:
+                print(f"Unexpected error: {str(e)}")
+                raise
+
     def get_albums(self):
         """Fetch all albums from Shutterfly"""
         url = 'https://cmd.thislife.com/json?method=album.getAlbums'
-        
-        # Extract sfly_uid from JWT token
-        token_parts = self.access_token.split('.')
-        claims = json.loads(base64.b64decode(token_parts[1] + '=' * (-len(token_parts[1]) % 4)))
-        sfly_uid = claims['sfly_uid']
         
         payload = {
             "method": "album.getAlbums",
             "params": [
                 self.access_token,
-                sfly_uid,
+                self.claims['sfly_uid'],
                 None,
                 None,
                 True
@@ -44,7 +98,7 @@ class ShutterflyDownloader:
             "id": None
         }
         
-        response = self.session.post(url, json=payload)
+        response = self.make_request('post', url, json=payload)
         data = response.json()
         
         if not data['result']['success']:
@@ -82,7 +136,7 @@ class ShutterflyDownloader:
             "id": None
         }
         
-        response = self.session.post(url, json=payload)
+        response = self.make_request('post', url, json=payload)
         return response.json()
     
     def extract_moment_ids(self, moments_string):
@@ -107,8 +161,7 @@ class ShutterflyDownloader:
         album_dir.mkdir(parents=True, exist_ok=True)
         
         try:
-            response = self.session.get(url, stream=True)
-            response.raise_for_status()
+            response = self.make_request('get', url, stream=True)
             
             # Try to get filename from content-disposition header
             filename = None
