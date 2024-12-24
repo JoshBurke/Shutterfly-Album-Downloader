@@ -13,9 +13,9 @@ This script does not use the Shutterfly API, it uses the site's backend API. The
 ## Installation
 
 1. Clone the repository
-2. Install pipenv
-3. Run `pipenv install` to install the dependencies
-4. Insert your Shutterfly API access token [get like this](#getting-a-token) into the `downloader.py` file (line 195) 
+2. Install [pipenv](https://pipenv.pypa.io/en/latest/)
+3. Run `pipenv shell && pipenv install` to install the dependencies
+4. Insert your Shutterfly API access token [get like this](#getting-a-token) into the `downloader.py` file [(this line)](https://github.com/JoshBurke/Shutterfly-Album-Downloader/blob/50023227b00ec7f512e59fb5597f37ae0c1b1c95/downloader.py#L248)
 5. Run the script:
 
 ```bash
@@ -33,10 +33,10 @@ python downloader.py
 
 ## Getting a token
 
-You can get a token by logging into the Shutterfly site, opening the network tab in the browser's developer tools, navigating to the photos page, and finding the request that fetches the albums. The token is in the request headers. It lasts for 1 hour, so you may need to get a new one if you're downloading a lot of photos. The default rate limit is 1 request per second, but you can increase it in the `downloader.py` file (line 200).
+You can get a token by logging into the Shutterfly site, opening the network tab in the browser's developer tools, navigating to the photos page, and finding the request that fetches the albums. The token is in the request headers. Alternatively it's really easy to copy from the download request, so you can make one of those to get the token. It lasts for 1 hour, so you may need to get a new one if you're downloading a lot of photos. The default rate limit is 1 request per second, but you can increase it in the `downloader.py` file (line 200).
 
 ## Other files & implementation
 
-I created the other files in this repo while trying to reverse engineer the site's API and decode some encoded data. Basically the one tricky part of the Shutterfly site API is that the list of photo IDs in each album is encoded with some custom scheme I couldn't figure out. It's not AMF, it's not base64 or ASCII or UTF-8. It's some kind of struct or encoded json blob as a 277-character string that has the photo ID at the 9:25 indices. These are given to us concatenated into a single string and we have to pull them apart to get our list of IDs. Shutterfly API calls photos "moments" so it's the `moment_id` that you'd see in a network request if you were viewing/downloading a single photo.
+I created the other files in this repo while trying to reverse engineer the site's API and decode some encoded data. Basically the one tricky part of the Shutterfly site API is that the list of photo IDs in each album is encoded with some custom scheme I couldn't figure out. It's not AMF, it's not base64 or any text encodings. It's some kind of struct in memory or encoded json blob as a 277-character string that has the photo ID at the 9:25 indices, unencoded. These are given to us concatenated into a single string and we have to pull them apart to get our list of IDs. Shutterfly API calls photos "moments" so it's the `moment_id` that you'd see in a network request if you were viewing/downloading a single photo.
 
 The token is a JWT, it encodes its TTL in its claims so we know they last an hour. Other than that all the other API endpoints are pretty straightforward. List albums, for each album get their encoded `moments` string, parse to get all `moment_id` in album, call download endpoint with each `moment_id`.
