@@ -7,12 +7,16 @@ This script does not use the Shutterfly API, it uses the site's backend API. The
 ## Requirements
 
 - Python 3.9 or later
+- Pipenv
 - Shutterfly access token
 
 ## Installation
 
-1. Clone the repository (no need to install pipenv, no dependencies)
-2. Insert your Shutterfly API access token [get like this](#getting-a-token) into the `downloader.py` file (line 195) 3. Run the script:
+1. Clone the repository
+2. Install pipenv
+3. Run `pipenv install` to install the dependencies
+4. Insert your Shutterfly API access token [get like this](#getting-a-token) into the `downloader.py` file (line 195) 
+5. Run the script:
 
 ```bash
 python downloader.py
