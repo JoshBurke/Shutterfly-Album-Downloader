@@ -1,19 +1,18 @@
 # Shutterfly Album Downloader
 
-This is a Python script that downloads all albums & photos from Shutterfly for a given user using the Shutterfly's unofficial site API. It supports rate limiting, exponential backoff, and retries. It also supports mid-download supplying a new access token (tokens expire after 1 hour). All you need is an access token you can obtain (like this)[#Getting a token].
+This is a Python script that downloads all albums & photos from Shutterfly for a given user using the Shutterfly's unofficial site API. It supports rate limiting, exponential backoff, and retries. It also supports supplying a new access token mid-download (tokens expire after 1 hour). All you need is an access token you can obtain [like this](#getting-a-token).
 
 This script does not use the Shutterfly API, it uses the site's backend API. The site API is not documented and may change at any time, which could break this script. I reverse engineered it from the site's network traffic, and made some assumptions about the structure of the data that have held up so far, but there's no guarantee that they'll work for every user.
 
 ## Requirements
 
 - Python 3.9 or later
-- Shutterfly API access token
+- Shutterfly access token
 
 ## Installation
 
 1. Clone the repository (no need to install pipenv, no dependencies)
-2. Insert your Shutterfly API access token into the `downloader.py` file (line 195) - 
-2. Run the script:
+2. Insert your Shutterfly API access token [get like this](#getting-a-token) into the `downloader.py` file (line 195) 3. Run the script:
 
 ```bash
 python downloader.py
@@ -22,7 +21,7 @@ python downloader.py
 ## Notes
 
 - The script will download all albums & photos for the given user.
-- The script will pause & resume downloading if the access token expires.
+- The script will pause, prompt for a new access token, and resume downloading if the access token expires.
 - The script will retry downloading if the download fails.
 - The script will back off exponentially if the rate limit is exceeded.
 - The script will save the downloaded photos to the `shutterfly_photos` directory.
