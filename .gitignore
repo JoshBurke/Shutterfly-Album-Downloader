@@ -1,1 +1,4 @@
 shutterfly_photos/
+.env*
+.DS_Store
+token.txt

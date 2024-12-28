@@ -7,12 +7,13 @@ import json
 import base64
 from datetime import datetime, timedelta
 import random
+import argparse
 
 class TokenExpiredError(Exception):
     pass
 
 class ShutterflyDownloader:
-    def __init__(self, access_token, output_dir="downloads", rate_limit_delay=1.0, max_retries=3):
+    def __init__(self, access_token, output_dir="downloads", rate_limit_delay=0.1, max_retries=3):
         self.access_token = access_token
         self.output_dir = Path(output_dir)
         self.rate_limit_delay = rate_limit_delay
@@ -64,7 +65,35 @@ class ShutterflyDownloader:
                 
             except TokenExpiredError:
                 print("\nAccess token has expired. Please provide a new token.")
-                new_token = input("Enter new access token: ").strip()
+                print("Options:")
+                print("1. Save token to a file named 'token.txt' and press Enter")
+                print("2. Paste token directly (if your terminal supports it)")
+                
+                new_token = None
+                
+                # Try reading from file first
+                if os.path.exists('token.txt'):
+                    try:
+                        with open('token.txt', 'r') as f:
+                            new_token = f.read().strip()
+                        # Clean up the file
+                        os.unlink('token.txt')
+                        print("Successfully read token from token.txt")
+                    except Exception as e:
+                        print(f"Error reading token.txt: {e}")
+                
+                # If no file or file read failed, try direct input
+                if not new_token:
+                    try:
+                        new_token = input("Enter token: ").strip()
+                    except Exception:
+                        print("Error reading token from input. Please try the file method.")
+                        continue
+                
+                if not new_token:
+                    print("No token provided. Please try again.")
+                    continue
+                
                 self.update_access_token(new_token)
                 retry_count -= 1  # Don't count token updates as retries
                 
@@ -87,7 +116,7 @@ class ShutterflyDownloader:
             "method": "album.getAlbums",
             "params": [
                 self.access_token,
-                self.claims['sfly_uid'],
+                os.environ.get('LIFE_UID') or self.claims['sfly_uid'], # These are the same for new accounts but different for pre-2013 accounts
                 None,
                 None,
                 True
@@ -142,7 +171,8 @@ class ShutterflyDownloader:
     def extract_moment_ids(self, moments_string):
         """Extract all moment IDs from the moments string"""
         records = [moments_string[i:i+277] for i in range(0, len(moments_string), 277)]
-        moment_ids = [record[9:25] for record in records]
+        # Extract the 16-digit moment IDs and strip leading zeros
+        moment_ids = [record[9:25].lstrip('0') for record in records]
         return moment_ids
     
     def build_download_url(self, moment_id):
@@ -221,15 +251,26 @@ class ShutterflyDownloader:
         
         return successful, failed
     
-    def download_all_albums(self):
+    def download_all_albums(self, resume_from=None):
         """Download all albums and their photos"""
         albums = self.get_albums()
         print(f"Found {len(albums)} albums")
         
+        # Find the starting point if resuming
+        start_index = 0
+        if resume_from:
+            for i, album in enumerate(albums):
+                if album['name'] == resume_from:
+                    start_index = i
+                    print(f"Resuming from album: {resume_from}")
+                    break
+            else:
+                print(f"Warning: Album '{resume_from}' not found, starting from beginning")
+        
         total_successful = 0
         total_failed = 0
         
-        for album in albums:
+        for album in albums[start_index:]:
             print(f"\nProcessing album: {album['name']} ({album['photo_count']} photos)")
             successful, failed = self.download_album(album['id'], album['name'])
             
@@ -243,14 +284,50 @@ class ShutterflyDownloader:
         print(f"Total failed downloads: {total_failed}")
         return total_successful, total_failed
 
-# Example usage:
-if __name__ == "__main__":
-    ACCESS_TOKEN = "insert token here"
+    def count_items(self):
+        """Count total number of albums and photos without downloading"""
+        albums = self.get_albums()
+        total_photos = sum(album['photo_count'] for album in albums)
+        
+        print(f"\nFound {len(albums)} albums containing {total_photos} total photos:")
+        for album in albums:
+            print(f"- {album['name']}: {album['photo_count']} photos")
+        
+        return len(albums), total_photos
+
+def main():
+    """Main entry point with argument handling"""
+    parser = argparse.ArgumentParser(description='Download or count Shutterfly albums and photos')
+    parser.add_argument('--token', '-t', help='Shutterfly access token')
+    parser.add_argument('--output-dir', '-o', default='shutterfly_photos', 
+                       help='Output directory for downloaded photos')
+    parser.add_argument('--rate-limit', '-r', type=float, default=0.1,
+                       help='Rate limit delay between requests in seconds')
+    parser.add_argument('--count-only', '-c', action='store_true',
+                       help='Only count albums and photos without downloading')
+    parser.add_argument('--resume-from', help='Resume downloading from this album name')
+    
+    args = parser.parse_args()
+    
+    # Get token from argument or environment or prompt
+    token = args.token or os.environ.get('SHUTTERFLY_TOKEN')
+    if not token:
+        token = input("Enter Shutterfly access token: ").strip()
     
     downloader = ShutterflyDownloader(
-        access_token=ACCESS_TOKEN,
-        output_dir="shutterfly_photos",
-        rate_limit_delay=1.0
+        access_token=token,
+        output_dir=args.output_dir,
+        rate_limit_delay=args.rate_limit
     )
     
-    downloader.download_all_albums()
+    if args.count_only:
+        num_albums, num_photos = downloader.count_items()
+    else:
+        print("\nStarting download...")
+        total_successful, total_failed = downloader.download_all_albums(resume_from=args.resume_from)
+        print(f"\nDownload complete!")
+        print(f"Total successfully downloaded: {total_successful}")
+        print(f"Total failed downloads: {total_failed}")
+
+if __name__ == "__main__":
+    main()
