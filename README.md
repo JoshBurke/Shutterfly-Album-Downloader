@@ -55,6 +55,9 @@ python downloader.py --token YOUR_TOKEN --count-only
 - `--output-dir` or `-o`: Output directory for downloaded photos (default: shutterfly_photos)
 - `--rate-limit` or `-r`: Rate limit delay between requests in seconds (default: 1.0)
 - `--count-only` or `-c`: Only count albums and photos without downloading
+- `--compare`: Compare local downloads with server data to identify missing or incomplete albums
+- `--album` or `-a`: Download a single album by name
+- `--fix-incomplete`: Redownload all albums that have missing photos (overwrites existing files)
 
 Examples:
 ```bash
@@ -64,7 +67,26 @@ python downloader.py -t YOUR_TOKEN -o my_photos -r 0.5
 # Just count albums and photos
 python downloader.py -t YOUR_TOKEN --count-only
 
+# Compare local downloads with server data
+python downloader.py -t YOUR_TOKEN --compare
+
+# Download a single album
+python downloader.py -t YOUR_TOKEN --album "My Vacation Photos"
+
+# Redownload all incomplete albums
+python downloader.py -t YOUR_TOKEN --fix-incomplete
+
 # Use token from environment variable
 export SHUTTERFLY_TOKEN=your_token_here
 python downloader.py --count-only
 ```
+
+## Comparing Local and Server Data
+
+You can use the `--compare` option to check if your local downloads match what's on the server. This will:
+- Compare the number of photos in each album
+- Identify albums that are missing locally
+- Find any local albums that don't exist on the server
+- Show total photo count differences
+
+The comparison takes into account filename sanitization (removal of special characters) to ensure accurate matching between local and server album names.
