@@ -5,6 +5,8 @@ name = "pypi"
 
 [packages]
 requests = "*"
+pillow = "*"
+numpy = "*"
 
 [dev-packages]
 

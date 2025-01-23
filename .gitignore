@@ -1,1 +1,7 @@
 shutterfly_photos/
+.env*
+.DS_Store
+token.txt
+foldernames.txt
+ignore_albums.txt
+rename_folders.py
