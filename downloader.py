@@ -1,5 +1,4 @@
 import requests
-import time
 import os
 from urllib.parse import urlencode
 from pathlib import Path
@@ -8,6 +7,8 @@ import base64
 from datetime import datetime, timedelta
 import random
 import argparse
+from PIL import Image
+import numpy as np
 
 class TokenExpiredError(Exception):
     pass
@@ -278,11 +279,67 @@ class ShutterflyDownloader:
         
         Returns:
             tuple: (is_different, difference_type)
-            where difference_type is one of: None, 'size', 'content'
+            where difference_type is one of: None, 'size', 'content', 'pixels'
         """
         if file1.stat().st_size != file2.stat().st_size:
             return True, 'size'
-            
+        
+        # For image files, compare pixel data
+        if any(file1.name.lower().endswith(ext) for ext in ('.jpg', '.jpeg', '.png')):
+            try:
+                with Image.open(file1) as img1, Image.open(file2) as img2:
+                    # Normalize orientation based on EXIF
+                    try:
+                        for img in (img1, img2):
+                            if hasattr(img, '_getexif') and img._getexif():
+                                orientation = img._getexif().get(274)  # 274 is the orientation tag
+                                if orientation:
+                                    rotations = {
+                                        3: Image.ROTATE_180,
+                                        6: Image.ROTATE_270,
+                                        8: Image.ROTATE_90
+                                    }
+                                    if orientation in rotations:
+                                        img = img.transpose(rotations[orientation])
+                    except:
+                        pass  # Ignore orientation errors
+                    
+                    # Check dimensions first (after potential rotation)
+                    if img1.size != img2.size:
+                        return True, 'pixels'
+                    
+                    # Convert to RGB, dropping alpha channel if present
+                    if img1.mode in ('RGBA', 'LA'):
+                        img1 = img1.convert('RGB')
+                    if img2.mode in ('RGBA', 'LA'):
+                        img2 = img2.convert('RGB')
+                    
+                    # Convert both to RGB for consistent comparison
+                    if img1.mode != 'RGB':
+                        img1 = img1.convert('RGB')
+                    if img2.mode != 'RGB':
+                        img2 = img2.convert('RGB')
+                    
+                    # Get pixel data
+                    data1 = np.array(img1)
+                    data2 = np.array(img2)
+                    
+                    # Compare pixel data
+                    if not np.array_equal(data1, data2):
+                        # Calculate difference percentage for debugging
+                        diff_pixels = np.sum(data1 != data2)
+                        total_pixels = data1.size
+                        diff_percent = (diff_pixels / total_pixels) * 100
+                        print(f"Images differ by {diff_percent:.2f}% of pixels")
+                        return True, 'pixels'
+                    
+                    return False, None
+            except Exception as e:
+                print(f"Warning: Error comparing images: {e}")
+                # Fall back to byte comparison if image comparison fails
+                pass
+        
+        # For non-image files or if image comparison failed, do byte comparison
         with open(file1, 'rb') as f1, open(file2, 'rb') as f2:
             while True:
                 chunk1 = f1.read(chunk_size)
@@ -616,6 +673,159 @@ class ShutterflyDownloader:
         
         return total_successful, total_failed
 
+    def find_similar_filenames(self, filename):
+        """Find all files that appear to be duplicates of this filename based on naming pattern"""
+        # Work with just the filename part, not the full path
+        base, ext = os.path.splitext(filename.name)
+        
+        # Handle the case where the original file might have underscores
+        # If this file ends in _N where N is a number, remove that to get the original base
+        if '_' in base:
+            parts = base.rsplit('_', 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                original_base = parts[0]
+            else:
+                original_base = base
+        else:
+            original_base = base
+        
+        # Find all files that are either:
+        # 1. Exact match of the original base
+        # 2. Original base followed by _N where N is a number
+        similar_files = []
+        for f in filename.parent.iterdir():
+            if not f.is_file():
+                continue
+                
+            f_base, f_ext = os.path.splitext(f.name)
+            if f_ext.lower() != ext.lower():  # Must have same extension
+                continue
+                
+            if f_base == original_base:  # Exact match
+                similar_files.append(f)
+            elif '_' in f_base:  # Possible _N suffix
+                f_parts = f_base.rsplit('_', 1)
+                if len(f_parts) == 2 and f_parts[0] == original_base and f_parts[1].isdigit():
+                    similar_files.append(f)
+        
+        return similar_files
+
+    def dedupe_album(self, album_dir, thorough=False):
+        """Find and remove exact duplicates in an album directory"""
+        album_dir = Path(album_dir)
+        if not album_dir.is_dir():
+            return 0
+        
+        processed = set()
+        removed = 0
+        
+        # Get server count if available (for informational purposes only)
+        server_count = None
+        try:
+            albums = self.get_albums()
+            for album in albums:
+                if self.sanitize_filename(album['name']) == album_dir.name:
+                    server_count = album['photo_count']
+                    break
+        except:
+            pass  # Ignore errors, we'll proceed without server count
+        
+        local_count = len([f for f in album_dir.iterdir() if f.is_file()])
+        
+        # Skip if we don't have more files than we should (unless in thorough mode)
+        if not thorough and server_count is not None and local_count <= server_count:
+            print(f"Skipping {album_dir.name}: has {local_count} files, should have {server_count}")
+            return 0
+        
+        if server_count is not None:
+            print(f"Checking {album_dir.name}: has {local_count} files, should have {server_count}")
+        else:
+            print(f"Checking {album_dir.name}: has {local_count} files")
+        
+        for filepath in album_dir.iterdir():
+            if not filepath.is_file() or filepath in processed:
+                continue
+            
+            similar_files = self.find_similar_filenames(filepath)
+            if len(similar_files) > 1:  # We found potential duplicates
+                # Compare all files regardless of size
+                files_to_remove = set()
+                for i, file1 in enumerate(similar_files):
+                    for file2 in similar_files[i+1:]:  # Compare with all subsequent files
+                        if file2 not in files_to_remove:  # Skip if already marked for removal
+                            is_different, diff_type = self.files_are_different(file1, file2)
+                            if not is_different:  # Files are identical
+                                # Keep the one with the shorter name
+                                keep_file = min(file1, file2, key=lambda f: len(f.name))
+                                remove_file = file2 if keep_file == file1 else file1
+                                print(f"Removing duplicate: {remove_file.name} (identical to {keep_file.name})")
+                                files_to_remove.add(remove_file)
+                            else:
+                                diff_msg = {
+                                    'size': 'different file size',
+                                    'content': 'different content',
+                                    'pixels': 'different image content'
+                                }.get(diff_type, 'unknown difference')
+                                print(f"Keeping both {file1.name} and {file2.name} ({diff_msg})")
+                
+                # Remove all duplicates found
+                for file_to_remove in files_to_remove:
+                    file_to_remove.unlink()
+                    removed += 1
+                
+                processed.update(similar_files)
+            else:
+                processed.add(filepath)
+        
+        # Print summary for this album if we found and removed duplicates
+        if removed > 0:
+            new_count = len([f for f in album_dir.iterdir() if f.is_file()])
+            print(f"\nRemoved {removed} duplicates from {album_dir.name}")
+            print(f"Album now has {new_count} files")
+            if server_count is not None:
+                if new_count < server_count:
+                    print(f"Warning: Album still missing {server_count - new_count} photos")
+                elif new_count > server_count:
+                    print(f"Warning: Album has {new_count - server_count} extra photos")
+                else:
+                    print("Album now has the correct number of photos")
+        
+        return removed
+
+    def dedupe_all(self, thorough=False):
+        """Run deduplication across all album directories"""
+        print("\nChecking for duplicates...")
+        if thorough:
+            print("Running in thorough mode: checking all albums")
+        else:
+            print("Running in quick mode: only checking albums that might have duplicates")
+        
+        total_removed = 0
+        albums_processed = 0
+        albums_with_dupes = 0
+        albums_skipped = 0
+        
+        for album_dir in sorted(self.output_dir.iterdir()):
+            if album_dir.is_dir():
+                removed = self.dedupe_album(album_dir, thorough)
+                if removed > 0:
+                    albums_with_dupes += 1
+                    total_removed += removed
+                elif removed == 0 and not thorough:
+                    albums_skipped += 1
+                albums_processed += 1
+        
+        print(f"\nDeduplication complete!")
+        if not thorough:
+            print(f"Skipped {albums_skipped} albums with correct or fewer files than expected")
+        if total_removed > 0:
+            print(f"Found duplicates in {albums_with_dupes} out of {albums_processed - albums_skipped} checked albums")
+            print(f"Removed {total_removed} duplicate files")
+        else:
+            print("No exact duplicates found")
+        
+        return total_removed
+
 def main():
     """Main entry point with argument handling"""
     parser = argparse.ArgumentParser(description='Download or count Shutterfly albums and photos')
@@ -633,12 +843,16 @@ def main():
     parser.add_argument('--fix-incomplete', action='store_true',
                        help='Redownload all albums with missing photos')
     parser.add_argument('--ignore-albums', nargs='+', help='List of album names to ignore')
+    parser.add_argument('--dedupe', action='store_true',
+                       help='Find and remove exact duplicate photos (keeps files with different content)')
+    parser.add_argument('--thorough', action='store_true',
+                       help='When deduping, check all albums even if they have the correct number of files')
     
     args = parser.parse_args()
     
     # Get token from argument or environment or prompt
     token = args.token or os.environ.get('SHUTTERFLY_TOKEN')
-    if not token:
+    if not token and not args.dedupe:  # Only need token if not just deduping
         token = input("Enter Shutterfly access token: ").strip()
     
     downloader = ShutterflyDownloader(
@@ -648,7 +862,9 @@ def main():
         ignore_albums=args.ignore_albums
     )
     
-    if args.count_only:
+    if args.dedupe:
+        downloader.dedupe_all(thorough=args.thorough)
+    elif args.count_only:
         num_albums, num_photos = downloader.count_items()
     elif args.compare:
         downloader.compare_local_vs_server()
