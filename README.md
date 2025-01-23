@@ -4,7 +4,7 @@ This is a Python script that downloads all albums & photos from Shutterfly for a
 
 This script does not use the Shutterfly API, it uses the site's backend API. The site API is not documented and may change at any time, which could break this script. I reverse engineered it from the site's network traffic, and made some assumptions about the structure of the data that have held up so far, but there's no guarantee that they'll work forever.
 
-It might take some massaging to get it working for your account/use-case, as everyone stores their photos differently. I built it for my girlfriend's mom, who's photos are being held ransom by Shutterfly as they make her buy something every year so they don't delete them off their servers. They don't offer a good way to bulk download them so I figured I'd build this. If you're here, chances are you're in a similar situation; this script should help if you want a head start on getting your photos off Shutterfly.
+It might take some massaging to get it working for your account/use-case, as everyone stores their photos differently. I built it for my girlfriend's mom, who's photos are being held ransom by Shutterfly as they make her buy something every year so they don't delete them off their servers. This would be understandable, except they don't offer a good way to bulk download them so I figured I'd build this. If you're here, chances are you're in a similar situation; this script should help if you want a head start on getting your photos off Shutterfly.
 
 ## Requirements
 
