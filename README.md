@@ -51,23 +51,43 @@ You can get a token by logging into the Shutterfly site, opening the network tab
 
 ## Usage
 
-You can run the script in two modes:
+You can run the script in many different modes. The main is downloading:
 
-1. Download mode (default):
 ```bash
-python downloader.py --token YOUR_TOKEN
+python downloader.py
 ```
 
-2. Count-only mode (doesn't download anything):
+Though I find it easiest to use in this order:
+1. First just count to understand the scope and how much time it will take with whatever rate limit you want to use:
 ```bash
-python downloader.py --token YOUR_TOKEN --count-only
+python downloader.py --count-only
+```
+2. Run it in regular mode until it breaks or something happens. Refresh the token if it prompts you, easiest way is to put it in a `token.txt` file. Note the album that it stops on if it stops:
+```bash
+python downloader.py
+```
+3. If it did stop and you want to resume:
+```bash
+python downloader.py --resume-from <album name>
+```
+4. If you can't remember where it stopped, get some stats on local vs remote:
+```bash
+python downloader.py --compare
+```
+5. After it finishes, do a full pass and redownload all incomplete albums (sometimes photos or albums just failed at some point when you weren't watching):
+```bash
+python downloader.py --fix-incomplete
+```
+6. You can give it a full dedupe to make sure you don't have duplicates:
+```bash
+python downloader.py --dedupe --thorough
 ```
 
 ### Command Line Options
 
 - `--token` or `-t`: Shutterfly access token (can also be set via SHUTTERFLY_TOKEN environment variable)
 - `--output-dir` or `-o`: Output directory for downloaded photos (default: shutterfly_photos)
-- `--rate-limit` or `-r`: Rate limit delay between requests in seconds (default: 1.0)
+- `--rate-limit` or `-r`: Rate limit delay between requests in seconds (default: 1.0, but I often used 0.0 and never got throttled)
 - `--count-only` or `-c`: Only count albums and photos without downloading
 - `--compare`: Compare local downloads with server data to identify missing or incomplete albums
 - `--album` or `-a`: Download a single album by name
