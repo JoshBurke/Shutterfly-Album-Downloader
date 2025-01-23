@@ -19,7 +19,7 @@ It might take some massaging to get it working for your account/use-case, as eve
 3. Run `pipenv install` to install the dependencies
 4. Inject your Shutterfly API access token [get like this](#getting-a-token) into the env:
 
-```
+```bash
 export SHUTTERFLY_TOKEN=your_token_here
 ```
 5. Run the script:
@@ -27,6 +27,14 @@ export SHUTTERFLY_TOKEN=your_token_here
 ```bash
 python downloader.py
 ```
+
+6 (conditional): If your account is pre-2013ish, you'll need to set the `LIFE_UID` environment variable to your account's UID. You can find it in the URL of your account's page on shutterfly.com or in various requests:
+
+```bash
+export LIFE_UID=your_uid_here
+```
+
+They switched over to the new user ID scheme when they acquired "ThisLife" in 2013 and migrated their whole photo system. I found it easy to manage both of these in a single `.env` file in the root of the repo.
 
 ## Notes
 
@@ -40,8 +48,6 @@ python downloader.py
 ## Getting a token
 
 You can get a token by logging into the Shutterfly site, opening the network tab in the browser's developer tools, navigating to the photos page, and finding the request that fetches the albums. The token is in the request headers. You can also find it in the body of other requests. It lasts for 1 hour, so you may need to get a new one if you're downloading a lot of photos. The default rate limit is 1 request per second, but you can set it to a smaller value via the `--rate-limit` or `-r` option.
-
-I keep my token in a `.env` file in the root of the repo, I think that's the most convenient way to manage it.
 
 ## Usage
 
@@ -124,8 +130,9 @@ The `--dedupe` option helps you find and remove duplicate photos while preservin
 - Can run in thorough mode (`--thorough`) to check all albums regardless of photo count
 
 The deduplication process:
-1. First checks file sizes (fast comparison)
-2. If sizes match, compares file contents
-3. For image files, compares actual pixel data
-4. Handles EXIF orientation correctly
-5. Provides detailed statistics about types of duplicates found
+1. First checks file names for approximate matches (e.g. "IMG_1234.jpg" and "IMG_1234 1.jpg")
+2. First checks file sizes (fast comparison)
+3. If sizes match, compares file contents
+4. For image files, compares actual pixel data
+5. Handles EXIF orientation correctly
+6. Provides detailed statistics about types of duplicates found
