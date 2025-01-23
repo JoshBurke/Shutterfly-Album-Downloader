@@ -41,6 +41,8 @@ python downloader.py
 
 You can get a token by logging into the Shutterfly site, opening the network tab in the browser's developer tools, navigating to the photos page, and finding the request that fetches the albums. The token is in the request headers. You can also find it in the body of other requests. It lasts for 1 hour, so you may need to get a new one if you're downloading a lot of photos. The default rate limit is 1 request per second, but you can set it to a smaller value via the `--rate-limit` or `-r` option.
 
+I keep my token in a `.env` file in the root of the repo, I think that's the most convenient way to manage it.
+
 ## Usage
 
 You can run the script in two modes:
