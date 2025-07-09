@@ -66,19 +66,23 @@ python downloader.py --count-only
 ```bash
 python downloader.py
 ```
-3. If it did stop and you want to resume:
+3. For faster downloads, specify a maximum number of parallel downloads (the default is 1 - no parallel downloads). This has been safely tested up to 50. 
+```bash
+python downloader.py --parallel-workers 50
+```
+4. If it stopped and you want to resume:
 ```bash
 python downloader.py --resume-from <album name>
 ```
-4. If you can't remember where it stopped, get some stats on local vs remote:
+5. If you can't remember where it stopped, get some stats on local vs remote:
 ```bash
 python downloader.py --compare
 ```
-5. After it finishes, do a full pass and redownload all incomplete albums (sometimes photos or albums just failed at some point when you weren't watching):
+6. After it finishes, do a full pass and redownload all incomplete albums (sometimes photos or albums just failed at some point when you weren't watching):
 ```bash
 python downloader.py --fix-incomplete
 ```
-6. You can give it a full dedupe to make sure you don't have duplicates:
+7. You can give it a full dedupe to make sure you don't have duplicates:
 ```bash
 python downloader.py --dedupe --thorough
 ```
@@ -94,13 +98,14 @@ python downloader.py --dedupe --thorough
 - `--fix-incomplete`: Redownload all albums that have missing photos (overwrites existing files)
 - `--resume-from`: Resume downloading from a specific album name
 - `--ignore-albums`: Space-separated list of album names to ignore during download
+- `--parallel-workers` or `-p`: Maximum parallel downloads (default: 1, tested up to 50)
 - `--dedupe`: Find and remove exact duplicate photos while preserving files with different content
 - `--thorough`: When deduping, check all albums even if they have the correct number of files
 
 Examples:
 ```bash
-# Download with custom output directory and rate limit
-python downloader.py -t YOUR_TOKEN -o my_photos -r 0.5
+# Download with custom output directory, parallel downloads, and rate limit
+python downloader.py -t YOUR_TOKEN -o my_photos -p 50 -r 0.5
 
 # Just count albums and photos
 python downloader.py -t YOUR_TOKEN --count-only
