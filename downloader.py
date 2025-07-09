@@ -4,22 +4,25 @@ from urllib.parse import urlencode
 from pathlib import Path
 import json
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime
 import random
 import argparse
 from PIL import Image
 import numpy as np
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class TokenExpiredError(Exception):
     pass
 
 class ShutterflyDownloader:
-    def __init__(self, access_token, output_dir="downloads", rate_limit_delay=0.1, max_retries=3, ignore_albums=None):
+    def __init__(self, access_token, output_dir="downloads", rate_limit_delay=0.1, max_retries=3, ignore_albums=None, max_parallel_workers=1):
         self.access_token = access_token
         self.output_dir = Path(output_dir)
         self.rate_limit_delay = rate_limit_delay
         self.max_retries = max_retries
         self.ignore_albums = set(ignore_albums or [])  # Convert to set for faster lookups
+        self.max_parallel_workers=max_parallel_workers
         self.session = requests.Session()
         self.session.headers.update({
             'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -389,18 +392,32 @@ class ShutterflyDownloader:
             'different_size': 0,
             'different_content': 0
         }
-        
-        for i, moment_id in enumerate(moment_ids, 1):
-            print(f"Downloading photo {i}/{len(moment_ids)}")
-            
-            result = self.download_photo(moment_id, album_name, i, downloaded_files, album_stats)
-            if result:
-                successful += 1
-            else:
-                failed += 1
-            
-            if i < len(moment_ids):
-                time.sleep(self.rate_limit_delay)
+
+        with ThreadPoolExecutor(max_workers=self.max_parallel_workers) as executor:
+            # schedule all downloads
+            futures = {
+                executor.submit(
+                    self.download_photo,
+                    moment_id,
+                    album_name,
+                    idx,
+                    downloaded_files,
+                    album_stats
+                ): moment_id
+                for idx, moment_id in enumerate(moment_ids, start=1)
+            }
+
+            # as each download completes, tally results
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    if result:
+                        successful += 1
+                    else:
+                        failed += 1
+                except Exception as e:
+                    print(f"Error in worker for moment {futures[future]}: {e}")
+                    failed += 1
         
         # Print album-level duplicate statistics if we found any
         if album_stats['same_name_count'] > 0 and duplicate_stats is None:  # Only print if not aggregating
@@ -834,6 +851,8 @@ def main():
                        help='Output directory for downloaded photos')
     parser.add_argument('--rate-limit', '-r', type=float, default=0.1,
                        help='Rate limit delay between requests in seconds')
+    parser.add_argument('--parallel-workers', '-p', type=int, default=1,
+                        help='Rate limit delay between requests in seconds')
     parser.add_argument('--count-only', '-c', action='store_true',
                        help='Only count albums and photos without downloading')
     parser.add_argument('--resume-from', help='Resume downloading from this album name')
@@ -859,7 +878,8 @@ def main():
         access_token=token,
         output_dir=args.output_dir,
         rate_limit_delay=args.rate_limit,
-        ignore_albums=args.ignore_albums
+        ignore_albums=args.ignore_albums,
+        max_parallel_workers=args.parallel_workers
     )
     
     if args.dedupe:
