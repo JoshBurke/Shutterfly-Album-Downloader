@@ -4,7 +4,7 @@ from urllib.parse import urlencode
 from pathlib import Path
 import json
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import argparse
 from PIL import Image
@@ -24,16 +24,64 @@ class ShutterflyDownloader:
         self.ignore_albums = set(ignore_albums or [])  # Convert to set for faster lookups
         self.max_parallel_workers=max_parallel_workers
         self.session = requests.Session()
-        self.session.headers.update({
-            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'origin': 'https://photos.shutterfly.com',
-            'referer': 'https://photos.shutterfly.com/'
-        })
+        # Note: Headers will be set per-request in make_request method to match browser exactly
         
         # Parse token expiration
-        token_parts = self.access_token.split('.')
-        self.claims = json.loads(base64.b64decode(token_parts[1] + '=' * (-len(token_parts[1]) % 4)))
-        self.token_expiry = datetime.fromtimestamp(self.claims['exp'])
+        if os.environ.get('DEBUG'):
+            print(f"DEBUG: Access token in constructor: {self.access_token}")
+            print(f"DEBUG: Access token type: {type(self.access_token)}")
+            print(f"DEBUG: Access token is None: {self.access_token is None}")
+            print(f"DEBUG: Access token is empty: {self.access_token == ''}")
+        
+        if not self.access_token:
+            raise ValueError("Access token is required but was not provided or is empty")
+        
+        # Check if this is a JWT token (has dots) or a different format
+        if '.' in self.access_token:
+            # JWT format: header.payload.signature
+            token_parts = self.access_token.split('.')
+            if os.environ.get('DEBUG'):
+                print(f"DEBUG: JWT token detected - parts after split: {len(token_parts)} parts")
+            
+            if len(token_parts) < 2:
+                raise ValueError(f"Invalid JWT token format. Expected at least 2 parts separated by dots, got {len(token_parts)} parts")
+            
+            self.claims = json.loads(base64.b64decode(token_parts[1] + '=' * (-len(token_parts[1]) % 4)))
+            self.token_expiry = datetime.fromtimestamp(self.claims['exp'])
+        else:
+            # Non-JWT format - try to decode as URL-encoded base64
+            if os.environ.get('DEBUG'):
+                print(f"DEBUG: Non-JWT token detected - attempting URL decode and base64 decode")
+            try:
+                import urllib.parse
+                decoded_token = urllib.parse.unquote(self.access_token)
+                if os.environ.get('DEBUG'):
+                    print(f"DEBUG: URL decoded token: {decoded_token[:100]}...")
+                
+                # Try to decode as base64
+                decoded_data = base64.b64decode(decoded_token + '=' * (-len(decoded_token) % 4))
+                if os.environ.get('DEBUG'):
+                    print(f"DEBUG: Base64 decoded data length: {len(decoded_data)}")
+                
+                # Try to parse as JSON
+                self.claims = json.loads(decoded_data.decode('utf-8'))
+                if os.environ.get('DEBUG'):
+                    print(f"DEBUG: Successfully parsed claims: {list(self.claims.keys())}")
+                    print(f"DEBUG: Full claims content: {json.dumps(self.claims, indent=2)}")
+                
+                # Check if there's an expiration field
+                if 'exp' in self.claims:
+                    self.token_expiry = datetime.fromtimestamp(self.claims['exp'])
+                else:
+                    # Set a default expiration (24 hours from now)
+                    self.token_expiry = datetime.now() + timedelta(hours=24)
+                    if os.environ.get('DEBUG'):
+                        print(f"DEBUG: No expiration found in token, setting default to 24 hours from now")
+                    
+            except Exception as e:
+                if os.environ.get('DEBUG'):
+                    print(f"DEBUG: Error decoding token: {e}")
+                raise ValueError(f"Unable to decode token. Expected JWT format (with dots) or valid base64-encoded JSON. Error: {e}")
         
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -69,7 +117,27 @@ class ShutterflyDownloader:
                     print(f"Retrying in {wait_time:.1f} seconds...")
                     time.sleep(wait_time)
                 
-                response = getattr(self.session, method)(url, **kwargs)
+                # Set browser-like headers
+                headers = kwargs.pop('headers', {})
+                headers.update({
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Origin': 'https://photos.shutterfly.com',
+                    'Referer': 'https://photos.shutterfly.com/',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15',
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'cross-site'
+                })
+                
+                # Handle JSON payload - convert to string for form-encoded request
+                if 'json' in kwargs:
+                    data = json.dumps(kwargs.pop('json'))
+                    kwargs['data'] = data
+                
+                response = getattr(self.session, method)(url, headers=headers, **kwargs)
                 response.raise_for_status()
                 
                 return response
@@ -123,11 +191,23 @@ class ShutterflyDownloader:
         """Fetch all albums from Shutterfly"""
         url = 'https://cmd.thislife.com/json?method=album.getAlbums'
         
+        # Get the user ID from various possible sources
+        # Use the user ID from browser session (70024945169) or fallback to claims
+        user_id = os.environ.get('LIFE_UID') or "70024945169" or self.claims.get('sfly_uid') or self.claims.get('IDs', {}).get('deviceID')
+        
+        if os.environ.get('DEBUG'):
+            print(f"DEBUG: Using user_id: {user_id}")
+            print(f"DEBUG: Available claims keys: {list(self.claims.keys())}")
+            if 'sfly_uid' in self.claims:
+                print(f"DEBUG: sfly_uid from claims: {self.claims['sfly_uid']}")
+            if 'sfly3_uid' in self.claims:
+                print(f"DEBUG: sfly3_uid from claims: {self.claims['sfly3_uid']}")
+        
         payload = {
             "method": "album.getAlbums",
             "params": [
                 self.access_token,
-                os.environ.get('LIFE_UID') or self.claims['sfly_uid'], # These are the same for new accounts but different for pre-2013 accounts
+                user_id, # These are the same for new accounts but different for pre-2013 accounts
                 None,
                 None,
                 True
@@ -138,8 +218,14 @@ class ShutterflyDownloader:
             "id": None
         }
         
+        if os.environ.get('DEBUG'):
+            print(f"DEBUG: API payload: {json.dumps(payload, indent=2)}")
+        
         response = self.make_request('post', url, json=payload)
         data = response.json()
+        
+        if os.environ.get('DEBUG'):
+            print(f"DEBUG: API response: {json.dumps(data, indent=2)}")
         
         if not data['result']['success']:
             raise Exception(f"Failed to get albums: {data['result'].get('message', 'Unknown error')}")
@@ -873,6 +959,16 @@ def main():
     token = args.token or os.environ.get('SHUTTERFLY_TOKEN')
     if not token and not args.dedupe:  # Only need token if not just deduping
         token = input("Enter Shutterfly access token: ").strip()
+    
+    # Debug: Print token information (only if verbose)
+    if os.environ.get('DEBUG'):
+        print(f"DEBUG: Token provided: {'Yes' if token else 'No'}")
+        if token:
+            print(f"DEBUG: Token length: {len(token)}")
+            print(f"DEBUG: Token starts with: {token[:20]}...")
+            print(f"DEBUG: Token contains dots: {token.count('.')}")
+        else:
+            print("DEBUG: No token available")
     
     downloader = ShutterflyDownloader(
         access_token=token,
