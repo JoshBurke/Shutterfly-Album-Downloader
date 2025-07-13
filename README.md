@@ -22,6 +22,7 @@ It might take some massaging to get it working for your account/use-case, as eve
 ```bash
 export SHUTTERFLY_TOKEN=your_token_here
 ```
+
 5. Run the script:
 
 ```bash
@@ -47,7 +48,58 @@ They switched over to the new user ID scheme when they acquired "ThisLife" in 20
 
 ## Getting a token
 
-You can get a token by logging into the Shutterfly site, opening the network tab in the browser's developer tools, navigating to the photos page, and finding the request that fetches the albums. The token is in the request headers. You can also find it in the body of other requests. It lasts for 1 hour, so you may need to get a new one if you're downloading a lot of photos. The default rate limit is 1 request per second, but you can set it to a smaller value via the `--rate-limit` or `-r` option.
+To use this script, you need a Shutterfly access token. This token is required for all operations except deduplication. The token typically lasts for 1 hour, after which you will need to supply a new one.
+
+### How to obtain your token
+
+1. Log in to the Shutterfly website in your browser.
+2. Open the browser's Developer Tools (usually F12 or right-click → Inspect).
+3. Go to the Network tab.
+4. Navigate to "My Photos".
+5. Click the trash can in Developer Tools Network tab.
+6. Click on "Albums".
+7. Look for a network request to `cmd.thislife.com/json?method=album.getAlbums`.
+8. Click on the request and check the **Request Data** section. The access token will appear as the first parameter in the "params" array (a long string starting with "eyJ").
+9. Copy the entire token string (it may look like a long string of letters, numbers, and sometimes dots).
+
+### How to provide the token to the script
+
+You can provide the token in several ways:
+
+- **Command line argument:**
+  ```bash
+  python downloader.py --token YOUR_TOKEN
+  # or
+  python downloader.py -t YOUR_TOKEN
+  ```
+- **Environment variable:**
+  ```bash
+  export SHUTTERFLY_TOKEN=your_token_here
+  python downloader.py
+  ```
+- **Prompt:**
+  If you do not provide a token via the above methods, the script will prompt you to paste it when needed.
+- **Environment file (.env):**
+  Create a `.env` file in the script's directory with:
+  ```
+  SHUTTERFLY_TOKEN=your_token_here
+  ```
+  Then run the script normally.
+
+### Refreshing the token during long downloads
+
+If your token expires during a download, the script will pause and prompt you for a new token. You can:
+
+1. Obtain a new token using the browser steps above.
+2. Save the new token in a file named `token.txt` in the script's directory. The script will automatically read and use this token when prompted, then delete the file for security.
+3. Alternatively, you can paste the new token directly into the terminal when prompted.
+
+### Token formats
+
+- The script supports both JWT (tokens with dots, e.g., `xxxxx.yyyyy.zzzzz`) and non-JWT (base64 or URL-encoded) token formats.
+- The script will attempt to decode and validate the token, and will alert you if the format is invalid.
+
+**Note:** The token is required for all operations except deduplication (`--dedupe`).
 
 ## Usage
 
@@ -58,31 +110,45 @@ python downloader.py
 ```
 
 Though I find it easiest to use in this order:
+
 1. First just count to understand the scope and how much time it will take with whatever rate limit you want to use:
+
 ```bash
 python downloader.py --count-only
 ```
+
 2. Run it in regular mode until it breaks or something happens. Refresh the token if it prompts you, easiest way is to put it in a `token.txt` file. Note the album that it stops on if it stops:
+
 ```bash
 python downloader.py
 ```
-3. For faster downloads, specify a maximum number of parallel downloads (the default is 1 - no parallel downloads). This has been safely tested up to 50. 
+
+3. For faster downloads, specify a maximum number of parallel downloads (the default is 1 - no parallel downloads). This has been safely tested up to 50.
+
 ```bash
 python downloader.py --parallel-workers 50
 ```
+
 4. If it stopped and you want to resume:
+
 ```bash
 python downloader.py --resume-from <album name>
 ```
+
 5. If you can't remember where it stopped, get some stats on local vs remote:
+
 ```bash
 python downloader.py --compare
 ```
+
 6. After it finishes, do a full pass and redownload all incomplete albums (sometimes photos or albums just failed at some point when you weren't watching):
+
 ```bash
 python downloader.py --fix-incomplete
 ```
+
 7. You can give it a full dedupe to make sure you don't have duplicates:
+
 ```bash
 python downloader.py --dedupe --thorough
 ```
@@ -103,6 +169,7 @@ python downloader.py --dedupe --thorough
 - `--thorough`: When deduping, check all albums even if they have the correct number of files
 
 Examples:
+
 ```bash
 # Download with custom output directory, parallel downloads, and rate limit
 python downloader.py -t YOUR_TOKEN -o my_photos -p 50 -r 0.5
@@ -139,6 +206,7 @@ python downloader.py --count-only
 ## Comparing Local and Server Data
 
 You can use the `--compare` option to check if your local downloads match what's on the server. This will:
+
 - Compare the number of photos in each album
 - Identify albums that are missing locally
 - Find any local albums that don't exist on the server
@@ -149,12 +217,14 @@ The comparison takes into account filename sanitization (removal of special char
 ## Deduplication
 
 The `--dedupe` option helps you find and remove duplicate photos while preserving unique content:
+
 - Compares files by size, content, and pixel data for images
 - Preserves files that have the same name but different content
 - Reports statistics about duplicates found
 - Can run in thorough mode (`--thorough`) to check all albums regardless of photo count
 
 The deduplication process:
+
 1. First checks file names for approximate matches (e.g. "IMG_1234.jpg" and "IMG_1234 1.jpg")
 2. First checks file sizes (fast comparison)
 3. If sizes match, compares file contents
