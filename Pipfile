@@ -4,7 +4,8 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-requests = "*"
+requests = ">=2.31,<2.32"
+urllib3 = "<2"
 pillow = "*"
 numpy = "*"
 
