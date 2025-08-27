@@ -2,14 +2,28 @@ name: tests
 
 on:
   pull_request:
+  pull_request_target:
   push:
     branches: [ main ]
 
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout PR head (pull_request_target)
+        if: ${{ github.event_name == 'pull_request_target' }}
+        uses: actions/checkout@v4
+        with:
+          # On pull_request_target, default checkout is base repo. Explicitly get the fork's commit
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Checkout (push/pull_request)
+        if: ${{ github.event_name != 'pull_request_target' }}
+        uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
