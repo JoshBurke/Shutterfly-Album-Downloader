@@ -4,6 +4,8 @@ from .conftest import FakeResponse, make_token
 
 def test_get_albums_uses_sfly_uid(monkeypatch, downloader_factory):
     d = downloader_factory(access_token=make_token())
+    # Ensure no prompt by setting LIFE_UID to match claims
+    monkeypatch.setenv("LIFE_UID", d.claims["sfly_uid"]) 
 
     payload = {
         "result": {

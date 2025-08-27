@@ -165,16 +165,23 @@ class ShutterflyDownloader:
         """Fetch all albums from Shutterfly"""
         url = 'https://cmd.thislife.com/json?method=album.getAlbums'
         
-        # Get user ID from environment or prompt user
-        user_id = os.environ.get('LIFE_UID')
-        if not user_id:
-            print("\nNo LIFE_UID found in environment variables.")
-            print("This is required for the Shutterfly API to work.")
-            print("You can find your UID in the URL of your Shutterfly account page")
-            print("or set it as an environment variable: export LIFE_UID=your_uid_here")
-            user_id = input("Please enter your Shutterfly user ID: ").strip()
+        # Determine user ID source depending on auth method
+        # - For session cookie auth, LIFE_UID is required (prompt if missing)
+        # - For access token auth, prefer token claims (sfly_uid) then LIFE_UID if present
+        user_id = None
+        if self.access_token.startswith('_thislife_session='):
+            user_id = os.environ.get('LIFE_UID')
             if not user_id:
-                raise Exception("User ID is required to proceed")
+                print("\nNo LIFE_UID found in environment variables.")
+                print("This is required when using a _thislife_session cookie.")
+                print("You can find your UID in the URL of your Shutterfly account page")
+                print("or set it as an environment variable: export LIFE_UID=your_uid_here")
+                user_id = input("Please enter your Shutterfly user ID: ").strip()
+                if not user_id:
+                    raise Exception("User ID is required to proceed when using session cookie auth")
+        else:
+            # Access token path: try claims first, then environment (do not prompt)
+            user_id = (self.claims or {}).get('sfly_uid') or os.environ.get('LIFE_UID')
         
         # Handle different authentication methods
         if self.access_token.startswith('_thislife_session='):

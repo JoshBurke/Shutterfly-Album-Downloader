@@ -1,6 +1,6 @@
 # Shutterfly Album Downloader
 
-This is a Python script that downloads all albums & photos from Shutterfly for a given user using the Shutterfly's unofficial site API. It supports rate limiting, exponential backoff, and retries. It also supports supplying a new access token mid-download (tokens expire after 1 hour). All you need is an access token you can obtain [like this](#getting-a-token).
+This is a Python script that downloads all albums & photos from Shutterfly for a given user using the Shutterfly's unofficial site API. It supports rate limiting, exponential backoff, and retries. It also supports supplying a new credential mid-download. You can use your browser session cookie (recommended) or an access token (see [Getting a token](#getting-a-token)).
 
 This script does not use the Shutterfly API, it uses the site's backend API. The site API is not documented and may change at any time, which could break this script. I reverse engineered it from the site's network traffic, and made some assumptions about the structure of the data that have held up so far, but there's no guarantee that they'll work forever.
 
@@ -10,16 +10,22 @@ It might take some massaging to get it working for your account/use-case, as eve
 
 - Python 3.9 or later
 - Pipenv
-- Shutterfly access token
+- Shutterfly auth: `_thislife_session` cookie or access token
 
 ## Installation
 
 1. Clone the repository
 2. Install pipenv
 3. Run `pipenv install` to install the dependencies
-4. Inject your Shutterfly API access token [get like this](#getting-a-token) into the env:
+4. Inject your Shutterfly auth into the env (see [Getting a token](#getting-a-token)):
 
 ```bash
+# Option A: Session cookie (recommended for long runs)
+export SHUTTERFLY_TOKEN="_thislife_session=your_cookie_value_here"
+# If using a session cookie, you must also provide LIFE_UID
+export LIFE_UID=your_uid_here
+
+# Option B: Access token (JWT or similar)
 export SHUTTERFLY_TOKEN=your_token_here
 ```
 5. Run the script:
@@ -28,7 +34,7 @@ export SHUTTERFLY_TOKEN=your_token_here
 python downloader.py
 ```
 
-6 (conditional): If your account is pre-2013ish, you'll need to set the `LIFE_UID` environment variable to your account's UID. You can find it in the URL of your account's page on shutterfly.com or in various requests:
+6 (conditional): If your account is pre-2013ish, you'll always need to set the `LIFE_UID` environment variable to your account's UID while running this script. You can find it in the URL of your account's page on shutterfly.com or in various requests:
 
 ```bash
 export LIFE_UID=your_uid_here
@@ -47,7 +53,40 @@ They switched over to the new user ID scheme when they acquired "ThisLife" in 20
 
 ## Getting a token
 
-You can get a token by logging into the Shutterfly site, opening the network tab in the browser's developer tools, navigating to the photos page, and finding the request that fetches the albums. The token is in the request headers. You can also find it in the body of other requests. It lasts for 1 hour, so you may need to get a new one if you're downloading a lot of photos. The default rate limit is 1 request per second, but you can set it to a smaller value via the `--rate-limit` or `-r` option.
+### Session Cookie (Recommended)
+
+You can authenticate with your browser session cookie instead of a short‑lived access token. This is useful when:
+- You can’t easily capture a JWT access token (SSO/corporate login flows, mobile flows, or the site returns non‑JWT tokens).
+- Tokens expire every hour and you’d rather copy one cookie than refresh tokens repeatedly.
+- You prefer to work from an already‑authenticated browser session.
+
+How to obtain and use it:
+1. Log in to `https://photos.shutterfly.com` in your browser.
+2. Open Developer Tools → Application/Storage → Cookies for `photos.shutterfly.com`.
+3. Copy the `_thislife_session` cookie’s value.
+4. Provide it to the script as your token, including the cookie name. For example:
+   - Environment: `export SHUTTERFLY_TOKEN="_thislife_session=<cookie_value>"`
+   - Or paste when the script prompts for a token.
+
+Requirements and caveats:
+- You must also provide your `LIFE_UID` because the cookie does not include it. Either set `export LIFE_UID=your_uid` or the script will prompt.
+- The script URL‑decodes the cookie automatically; just paste the raw value you copied.
+- Cookies can still expire. If a long run outlives the cookie, place the new value in `token.txt` or paste it when prompted; the script will resume.
+- Treat the cookie like a password; anyone with it can read your photos.
+
+Example (cookie auth):
+```bash
+export SHUTTERFLY_TOKEN="_thislife_session=REDACTED"
+export LIFE_UID=027012345678
+python downloader.py --count-only
+```
+
+### Access Token (Also supported)
+
+You can get a token by logging into the Shutterfly site, opening the network tab in the browser's developer tools, navigating to the photos page, and finding the request that fetches the albums. The token is in the request headers. You can also find it in the body of other requests. It lasts for ~1 hour, so you may need to get a new one if you're downloading a lot of photos.
+
+- If you authenticate with a `_thislife_session` cookie, you must provide `LIFE_UID` (via env or prompt) because the UID is not present in cookie claims.
+- If you authenticate with an access token, the UID is read from the token claims and `LIFE_UID` is optional.
 
 ## Usage
 
