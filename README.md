@@ -161,3 +161,26 @@ The deduplication process:
 4. For image files, compares actual pixel data
 5. Handles EXIF orientation correctly
 6. Provides detailed statistics about types of duplicates found
+
+## Testing
+
+This repo includes a pytest suite which autoruns on PRs. If you want to run it yourself:
+
+- Install deps (with dev tools):
+```bash
+pipenv install --dev
+```
+
+- Run the full test suite:
+```bash
+pipenv run pytest
+```
+
+- Run a single test or file:
+```bash
+pipenv run pytest tests/test_albums.py::test_get_albums_with_realshape
+```
+
+Notes:
+- Tests validate request/response shapes, moment parsing, URL building, duplicate filename handling, compare output, and dedupe behavior.
+- CI runs the suite on PRs via GitHub Actions (`.github/workflows/ci.yml`).
