@@ -26,21 +26,10 @@ class ShutterflyDownloader:
         self.ignore_albums = set(ignore_albums or [])  # Convert to set for faster lookups
         self.max_parallel_workers=max_parallel_workers
         self.session = requests.Session()
-        self._is_cookie_auth = access_token.startswith('_thislife_session=')
-        
-        # Handle session cookie auth — store raw cookie header on the session
-        if self._is_cookie_auth:
-            session_value = access_token.split('_thislife_session=')[1].split(';')[0]
-            session_value = urllib.parse.unquote(session_value)
-            self._cookie_header = f'_thislife_session={session_value}'
-            print("Using session cookie authentication")
-        else:
-            self._cookie_header = None
-            print("Using access token authentication")
         
         # Parse token to extract claims and expiration
         self.claims, self.token_expiry = self._parse_token(self.access_token)
-        self._debug(f"Token type: {'cookie' if self._is_cookie_auth else 'JWT' if '.' in self.access_token else 'other'}")
+        self._debug(f"Token type: {'JWT' if '.' in self.access_token else 'other'}")
         self._debug(f"Token expiry: {self.token_expiry}")
         self._debug(f"Claims keys: {list(self.claims.keys())}")
 
@@ -65,10 +54,6 @@ class ShutterflyDownloader:
         base64 blobs. Falls back to a 1-hour default expiry when the
         format is unrecognised.
         """
-        # Skip parsing for cookie-based auth
-        if token.startswith('_thislife_session='):
-            return {}, datetime.now() + timedelta(hours=1)
-        
         # Try JWT first (header.payload.signature)
         parts = token.split('.')
         if len(parts) == 3:
@@ -134,12 +119,6 @@ class ShutterflyDownloader:
                     'Sec-Fetch-Mode': 'cors',
                     'Sec-Fetch-Site': 'cross-site',
                 })
-
-                # For cookie auth, send the session cookie as a raw header
-                # (requests' cookie jar domain matching is unreliable across
-                # different thislife.com subdomains)
-                if self._cookie_header:
-                    req_headers['Cookie'] = self._cookie_header
 
                 # Shutterfly expects JSON payloads sent as a form-encoded
                 # string body (Content-Type stays x-www-form-urlencoded but
@@ -209,7 +188,7 @@ class ShutterflyDownloader:
                 raise
 
     def _resolve_user_id(self):
-        """Resolve the Shutterfly user ID from env, token claims, or user prompt."""
+        """Resolve the Shutterfly user ID from env or token claims."""
         # Environment variable always wins
         uid = os.environ.get('LIFE_UID')
         if uid:
@@ -222,18 +201,6 @@ class ShutterflyDownloader:
             self._debug(f"User ID from token claims (sfly_uid): {uid}")
             return uid
         
-        # For cookie auth we must have a UID — prompt as last resort
-        if self._is_cookie_auth:
-            print("\nNo LIFE_UID found in environment variables.")
-            print("This is required when using a _thislife_session cookie.")
-            print("You can find your UID in the getAlbums response payload in")
-            print("your browser's Network tab, or set it as an environment variable:")
-            print("  export LIFE_UID=your_uid_here")
-            uid = input("Please enter your Shutterfly user ID: ").strip()
-            if not uid:
-                raise Exception("User ID is required to proceed when using session cookie auth")
-            return uid
-        
         return None
 
     def get_albums(self):
@@ -241,17 +208,15 @@ class ShutterflyDownloader:
         url = 'https://cmd.thislife.com/json?method=album.getAlbums'
         user_id = self._resolve_user_id()
         
-        # For cookie auth the session cookie is sent via the Cookie header
-        # (handled by self.session) and the UID goes as the first param.
-        # For token auth the access token is first, UID second.
-        if self._is_cookie_auth:
-            params = [user_id, None, None, True]
-        else:
-            params = [self.access_token, user_id, None, None, True]
-        
         payload = {
             "method": "album.getAlbums",
-            "params": params,
+            "params": [
+                self.access_token,
+                user_id,
+                None,
+                None,
+                True
+            ],
             "headers": {
                 "X-SFLY-SubSource": "library"
             },
