@@ -28,14 +28,14 @@ class ShutterflyDownloader:
         self.session = requests.Session()
         self._is_cookie_auth = access_token.startswith('_thislife_session=')
         
-        # Handle session cookie auth — store cookie on the session
+        # Handle session cookie auth — store raw cookie header on the session
         if self._is_cookie_auth:
             session_value = access_token.split('_thislife_session=')[1].split(';')[0]
             session_value = urllib.parse.unquote(session_value)
-            self.session.cookies.set('_thislife_session', session_value,
-                                     domain='cmd.thislife.com')
+            self._cookie_header = f'_thislife_session={session_value}'
             print("Using session cookie authentication")
         else:
+            self._cookie_header = None
             print("Using access token authentication")
         
         # Parse token to extract claims and expiration
@@ -134,6 +134,12 @@ class ShutterflyDownloader:
                     'Sec-Fetch-Mode': 'cors',
                     'Sec-Fetch-Site': 'cross-site',
                 })
+
+                # For cookie auth, send the session cookie as a raw header
+                # (requests' cookie jar domain matching is unreliable across
+                # different thislife.com subdomains)
+                if self._cookie_header:
+                    req_headers['Cookie'] = self._cookie_header
 
                 # Shutterfly expects JSON payloads sent as a form-encoded
                 # string body (Content-Type stays x-www-form-urlencoded but
