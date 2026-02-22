@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import base64
 from datetime import datetime, timedelta
+import urllib.parse
 import random
 import argparse
 from PIL import Image
@@ -24,46 +25,20 @@ class ShutterflyDownloader:
         self.ignore_albums = set(ignore_albums or [])  # Convert to set for faster lookups
         self.max_parallel_workers=max_parallel_workers
         self.session = requests.Session()
+        self._is_cookie_auth = access_token.startswith('_thislife_session=')
         
-        # Handle both access tokens and session cookies
-        if access_token.startswith('_thislife_session='):
-            # This is a session cookie, extract the session value
+        # Handle session cookie auth — store cookie on the session
+        if self._is_cookie_auth:
             session_value = access_token.split('_thislife_session=')[1].split(';')[0]
-            # URL decode the session value
-            import urllib.parse
             session_value = urllib.parse.unquote(session_value)
-            self.session.headers.update({
-                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'origin': 'https://photos.shutterfly.com',
-                'referer': 'https://photos.shutterfly.com/',
-                'cookie': f'_thislife_session={session_value}'
-            })
+            self.session.cookies.set('_thislife_session', session_value,
+                                     domain='cmd.thislife.com')
             print("Using session cookie authentication")
         else:
-            # This is an access token
-            self.session.headers.update({
-                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'origin': 'https://photos.shutterfly.com',
-                'referer': 'https://photos.shutterfly.com/'
-            })
             print("Using access token authentication")
         
-        # Parse token expiration if it's a JWT token, otherwise set default expiration
-        try:
-            token_parts = self.access_token.split('.')
-            if len(token_parts) == 3:  # JWT tokens have 3 parts
-                self.claims = json.loads(base64.b64decode(token_parts[1] + '=' * (-len(token_parts[1]) % 4)))
-                self.token_expiry = datetime.fromtimestamp(self.claims['exp'])
-            else:
-                # Not a JWT token, set default expiration to 1 hour from now
-                self.claims = {}
-                self.token_expiry = datetime.now() + timedelta(hours=1)
-                print("Warning: Token doesn't appear to be in JWT format. Setting default expiration to 1 hour.")
-        except Exception as e:
-            # If token parsing fails, set default expiration
-            self.claims = {}
-            self.token_expiry = datetime.now() + timedelta(hours=1)
-            print(f"Warning: Could not parse token expiration: {e}. Setting default expiration to 1 hour.")
+        # Parse token to extract claims and expiration
+        self.claims, self.token_expiry = self._parse_token(self.access_token)
         
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -73,6 +48,44 @@ class ShutterflyDownloader:
             with open(ignore_file) as f:
                 self.ignore_albums.update(line.strip() for line in f if line.strip())
     
+    @staticmethod
+    def _parse_token(token):
+        """Parse a token string and return (claims_dict, expiry_datetime).
+        
+        Supports JWT tokens (three dot-separated parts) and URL-encoded
+        base64 blobs. Falls back to a 1-hour default expiry when the
+        format is unrecognised.
+        """
+        # Skip parsing for cookie-based auth
+        if token.startswith('_thislife_session='):
+            return {}, datetime.now() + timedelta(hours=1)
+        
+        # Try JWT first (header.payload.signature)
+        parts = token.split('.')
+        if len(parts) == 3:
+            try:
+                payload = parts[1] + '=' * (-len(parts[1]) % 4)
+                claims = json.loads(base64.b64decode(payload))
+                expiry = datetime.fromtimestamp(claims['exp'])
+                return claims, expiry
+            except Exception:
+                pass  # fall through to other formats
+        
+        # Try URL-decoded base64 blob
+        try:
+            decoded = urllib.parse.unquote(token)
+            raw = base64.b64decode(decoded + '=' * (-len(decoded) % 4))
+            claims = json.loads(raw.decode('utf-8'))
+            if 'exp' in claims:
+                return claims, datetime.fromtimestamp(claims['exp'])
+            return claims, datetime.now() + timedelta(hours=1)
+        except Exception:
+            pass
+        
+        # Unknown format — still usable, just can't extract claims
+        print("Warning: Could not parse token format. Setting default expiration to 1 hour.")
+        return {}, datetime.now() + timedelta(hours=1)
+
     def check_token_validity(self):
         """Check if token is still valid"""
         if datetime.now() >= self.token_expiry:
@@ -81,21 +94,7 @@ class ShutterflyDownloader:
     def update_access_token(self, new_token):
         """Update the access token and its expiration time"""
         self.access_token = new_token
-        try:
-            token_parts = self.access_token.split('.')
-            if len(token_parts) == 3:  # JWT tokens have 3 parts
-                self.claims = json.loads(base64.b64decode(token_parts[1] + '=' * (-len(token_parts[1]) % 4)))
-                self.token_expiry = datetime.fromtimestamp(self.claims['exp'])
-            else:
-                # Not a JWT token, set default expiration to 1 hour from now
-                self.claims = {}
-                self.token_expiry = datetime.now() + timedelta(hours=1)
-                print("Warning: New token doesn't appear to be in JWT format. Setting default expiration to 1 hour.")
-        except Exception as e:
-            # If token parsing fails, set default expiration
-            self.claims = {}
-            self.token_expiry = datetime.now() + timedelta(hours=1)
-            print(f"Warning: Could not parse new token expiration: {e}. Setting default expiration to 1 hour.")
+        self.claims, self.token_expiry = self._parse_token(new_token)
         print("Access token updated successfully")
 
     def make_request(self, method, url, **kwargs):
@@ -111,7 +110,31 @@ class ShutterflyDownloader:
                     print(f"Retrying in {wait_time:.1f} seconds...")
                     time.sleep(wait_time)
                 
-                response = getattr(self.session, method)(url, **kwargs)
+                # Browser-like headers to avoid request validation rejection
+                req_headers = kwargs.pop('headers', {})
+                req_headers.update({
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Origin': 'https://photos.shutterfly.com',
+                    'Referer': 'https://photos.shutterfly.com/',
+                    'User-Agent': ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                                   'AppleWebKit/605.1.15 (KHTML, like Gecko) '
+                                   'Version/18.5 Safari/605.1.15'),
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'cross-site',
+                })
+
+                # Shutterfly expects JSON payloads sent as a form-encoded
+                # string body (Content-Type stays x-www-form-urlencoded but
+                # the value is a raw JSON string).  The `requests` library's
+                # `json=` kwarg sets Content-Type to application/json which
+                # gets rejected, so we serialise manually.
+                if 'json' in kwargs:
+                    kwargs['data'] = json.dumps(kwargs.pop('json'))
+
+                response = getattr(self.session, method)(url, headers=req_headers, **kwargs)
                 response.raise_for_status()
                 
                 return response
@@ -161,113 +184,56 @@ class ShutterflyDownloader:
                 print(f"Unexpected error: {str(e)}")
                 raise
 
+    def _resolve_user_id(self):
+        """Resolve the Shutterfly user ID from env, token claims, or user prompt."""
+        # Environment variable always wins
+        uid = os.environ.get('LIFE_UID')
+        if uid:
+            return uid
+        
+        # Try extracting from token claims
+        uid = self.claims.get('sfly_uid')
+        if uid:
+            return uid
+        
+        # For cookie auth we must have a UID — prompt as last resort
+        if self._is_cookie_auth:
+            print("\nNo LIFE_UID found in environment variables.")
+            print("This is required when using a _thislife_session cookie.")
+            print("You can find your UID in the getAlbums response payload in")
+            print("your browser's Network tab, or set it as an environment variable:")
+            print("  export LIFE_UID=your_uid_here")
+            uid = input("Please enter your Shutterfly user ID: ").strip()
+            if not uid:
+                raise Exception("User ID is required to proceed when using session cookie auth")
+            return uid
+        
+        return None
+
     def get_albums(self):
         """Fetch all albums from Shutterfly"""
         url = 'https://cmd.thislife.com/json?method=album.getAlbums'
+        user_id = self._resolve_user_id()
         
-        # Determine user ID source depending on auth method
-        # - For session cookie auth, LIFE_UID is required (prompt if missing)
-        # - For access token auth, prefer token claims (sfly_uid) then LIFE_UID if present
-        user_id = None
-        if self.access_token.startswith('_thislife_session='):
-            user_id = os.environ.get('LIFE_UID')
-            if not user_id:
-                print("\nNo LIFE_UID found in environment variables.")
-                print("This is required when using a _thislife_session cookie.")
-                print("You can find your UID in the URL of your Shutterfly account page")
-                print("or set it as an environment variable: export LIFE_UID=your_uid_here")
-                user_id = input("Please enter your Shutterfly user ID: ").strip()
-                if not user_id:
-                    raise Exception("User ID is required to proceed when using session cookie auth")
+        # For cookie auth the session cookie is sent via the Cookie header
+        # (handled by self.session) and the UID goes as the first param.
+        # For token auth the access token is first, UID second.
+        if self._is_cookie_auth:
+            params = [user_id, None, None, True]
         else:
-            # Access token path: try claims first, then environment (do not prompt)
-            user_id = (self.claims or {}).get('sfly_uid') or os.environ.get('LIFE_UID')
+            params = [self.access_token, user_id, None, None, True]
         
-        # Handle different authentication methods
-        if self.access_token.startswith('_thislife_session='):
-            # Using session cookie - try both with and without access token
-            # First try with just the session cookie
-            payload = {
-                "method": "album.getAlbums",
-                "params": [
-                    user_id,  # User ID as first param
-                    None,
-                    None,
-                    True
-                ],
-                "headers": {
-                    "X-SFLY-SubSource": "library"
-                },
-                "id": None
-            }
-            
-            print(f"Debug: Trying with session cookie only...")
-            response = self.make_request('post', url, json=payload)
-            data = response.json()
-            
-            if data['result']['success']:
-                print("Success with session cookie only!")
-            else:
-                print(f"Session cookie only failed: {data['result'].get('message', 'Unknown error')}")
-                # Try with a placeholder token in case the API expects one
-                payload["params"] = [
-                    "placeholder_token",  # Try with a placeholder
-                    user_id,
-                    None,
-                    None,
-                    True
-                ]
-                print(f"Debug: Trying with placeholder token...")
-                response = self.make_request('post', url, json=payload)
-                data = response.json()
-        else:
-            # Using access token - send token in params
-            # Try different parameter orders since API is saying "Wrong or missing Parameter"
-            payload = {
-                "method": "album.getAlbums",
-                "params": [
-                    self.access_token,
-                    user_id,  # Use the user ID we just got
-                    None,
-                    None,
-                    True
-                ],
-                "headers": {
-                    "X-SFLY-SubSource": "library"
-                },
-                "id": None
-            }
-            
-            print(f"Debug: Trying with token first, user ID second...")
-            response = self.make_request('post', url, json=payload)
-            data = response.json()
-            
-            if data['result']['success']:
-                print("Success with token first!")
-            else:
-                print(f"Token first failed: {data['result'].get('message', 'Unknown error')}")
-                # Try with user ID first, token second
-                payload["params"] = [
-                    user_id,
-                    self.access_token,
-                    None,
-                    None,
-                    True
-                ]
-                print(f"Debug: Trying with user ID first, token second...")
-                response = self.make_request('post', url, json=payload)
-                data = response.json()
-        
-        print(f"Debug: Making request to {url}")
-        print(f"Debug: Payload: {json.dumps(payload, indent=2)}")
-        print(f"Debug: Access token: {self.access_token[:20]}...")
-        print(f"Debug: User ID: {user_id}")
+        payload = {
+            "method": "album.getAlbums",
+            "params": params,
+            "headers": {
+                "X-SFLY-SubSource": "library"
+            },
+            "id": None
+        }
         
         response = self.make_request('post', url, json=payload)
         data = response.json()
-        
-        print(f"Debug: Response status: {response.status_code}")
-        print(f"Debug: Response data: {json.dumps(data, indent=2)}")
         
         if not data['result']['success']:
             raise Exception(f"Failed to get albums: {data['result'].get('message', 'Unknown error')}")
