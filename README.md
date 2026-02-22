@@ -36,13 +36,15 @@ You need a Shutterfly access token (JWT) to use this script. Tokens last ~23 hou
 1. Log in to [photos.shutterfly.com](https://photos.shutterfly.com) in your browser.
 2. Open Developer Tools (F12 or right-click → Inspect).
 3. Go to the **Network** tab.
-4. Navigate to **My Photos → Albums**.
+4. Navigate to **My Photos → Albums** on Shutterfly in your browser.
 5. Look for a request to `cmd.thislife.com/json?method=album.getAlbums`.
-6. Click the request and look at the **Request Body** (or "Payload" tab). In the `params` array, the first value is your access token — a long string starting with `eyJ`.
-7. Copy the entire token string.
+6. Click the request and look at the **Request Body** (or "Payload" tab). In the `params` object, the first value is your access token — a long string starting with `eyJ`.
+7. Copy the entire token string, export it into your env before you run this script.
+8. The second value is your LIFE_UID. If your account is pre-2013, you need to copy this value and export it in your env too.
 
 ```bash
-export SHUTTERFLY_TOKEN=eyJr...your_full_token_here
+export SHUTTERFLY_TOKEN=eyJr... (your full token here)
+export LIFE_UID=... (only if account is pre-2013)
 ```
 
 ### Pre-2013 accounts (LIFE_UID)
