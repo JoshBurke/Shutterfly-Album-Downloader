@@ -1,225 +1,189 @@
 # Shutterfly Album Downloader
 
-This is a Python script that downloads all albums & photos from Shutterfly for a given user using the Shutterfly's unofficial site API. It supports rate limiting, exponential backoff, and retries. It also supports supplying a new credential mid-download. You can use your browser session cookie (recommended) or an access token (see [Getting a token](#getting-a-token)).
+A Python script that bulk-downloads all albums and photos from Shutterfly using their unofficial site API. Supports rate limiting, exponential backoff, retries, parallel downloads, deduplication, and mid-download token refresh.
 
-This script does not use the Shutterfly API, it uses the site's backend API. The site API is not documented and may change at any time, which could break this script. I reverse engineered it from the site's network traffic, and made some assumptions about the structure of the data that have held up so far, but there's no guarantee that they'll work forever.
+I reverse-engineered this from the site's network traffic. It's not documented and may change at any time (Shutterfly is incentivized to prevent bulk downloads), but it has held up so far. If it breaks, open an issue.
 
-It might take some massaging to get it working for your account/use-case, as everyone stores their photos differently. I built it for my girlfriend's mom, who's photos are being held ransom by Shutterfly as they make her buy something every year so they don't delete them off their servers. This would be understandable, except they don't offer a good way to bulk download them so I figured I'd build this. If you're here, chances are you're in a similar situation; this script should help if you want a head start on getting your photos off Shutterfly.
+I built it for my girlfriend's mom, whose photos are being held ransom by Shutterfly — they make her buy something every year or they delete them, and they don't offer a good way to bulk download. If you're here, chances are you're in a similar situation.
 
 ## Requirements
 
-- Python 3.9 or later
-- Pipenv
-- Shutterfly auth: `_thislife_session` cookie or access token
+- Python 3.9+
+- Pipenv (`pip install pipenv`)
 
-## Installation
-
-1. Clone the repository
-2. Install pipenv
-3. Run `pipenv install` to install the dependencies
-4. Inject your Shutterfly auth into the env (see [Getting a token](#getting-a-token)):
+## Quick Start
 
 ```bash
-# Option A: Session cookie (recommended for long runs)
-export SHUTTERFLY_TOKEN="_thislife_session=your_cookie_value_here"
-# If using a session cookie, you must also provide LIFE_UID
-export LIFE_UID=your_uid_here
+git clone https://github.com/JoshBurke/Shutterfly-Album-Downloader.git
+cd Shutterfly-Album-Downloader
+pipenv install
+```
 
-# Option B: Access token (JWT or similar)
+Then get your auth token (see below) and run:
+
+```bash
 export SHUTTERFLY_TOKEN=your_token_here
+pipenv run python downloader.py --count-only   # see how many photos you have
+pipenv run python downloader.py                 # download everything
 ```
-5. Run the script:
+
+## Authentication
+
+You need a Shutterfly auth credential to use this script. There are two options:
+
+### Option A: Access Token (Recommended)
+
+The easiest method. Tokens last ~1 hour; the script will prompt you for a new one when it expires.
+
+1. Log in to [photos.shutterfly.com](https://photos.shutterfly.com) in your browser.
+2. Open Developer Tools (F12 or right-click → Inspect).
+3. Go to the **Network** tab.
+4. Navigate to **My Photos → Albums**.
+5. Look for a request to `cmd.thislife.com/json?method=album.getAlbums`.
+6. Click the request and look at the **Request Body** (or "Payload" tab). In the `params` array, the first value is your access token — a long string starting with `eyJ`.
+7. Copy the entire token string.
 
 ```bash
-python downloader.py
+export SHUTTERFLY_TOKEN=eyJr...your_full_token_here
 ```
 
-6 (conditional): If your account is pre-2013ish, you'll always need to set the `LIFE_UID` environment variable to your account's UID while running this script. You can find it in the URL of your account's page on shutterfly.com or in various requests:
+For accounts created **before ~2013** (pre-ThisLife migration), the user ID in the token may differ from your actual Shutterfly UID. In that case you also need to set `LIFE_UID`:
 
 ```bash
 export LIFE_UID=your_uid_here
 ```
 
-They switched over to the new user ID scheme when they acquired "ThisLife" in 2013 and migrated their whole photo system. I found it easy to manage both of these in a single `.env` file in the root of the repo.
+You can find your `LIFE_UID` by looking at the `getAlbums` response payload in the Network tab — it appears in the album data under each album you created (typically starts with `100...`).
 
-## Notes
+> **Tip:** If you're downloading a lot and don't want to keep refreshing tokens, you can save a new token to a file called `token.txt` in the script directory. The script will read it automatically when the current token expires.
 
-- The script will download all albums & photos for the given user.
-- The script will pause, prompt for a new access token, and resume downloading if the access token expires.
-- The script will retry downloading if the download fails.
-- The script will back off exponentially if the rate limit is exceeded.
-- The script will save the downloaded photos to the `shutterfly_photos` directory.
-- The script will print the total number of photos downloaded.
+### Option B: Session Cookie
 
-## Getting a token
+Useful when you can't easily capture a JWT (SSO/corporate logins, mobile flows) or tokens keep expiring too fast.
 
-### Session Cookie (Recommended)
+1. Log in to [photos.shutterfly.com](https://photos.shutterfly.com).
+2. Open Developer Tools → **Application** (Chrome) or **Storage** (Firefox) → Cookies.
+3. Find the `_thislife_session` cookie for `photos.shutterfly.com`.
+4. Copy its value.
 
-You can authenticate with your browser session cookie instead of a short‑lived access token. This is useful when:
-- You can’t easily capture a JWT access token (SSO/corporate login flows, mobile flows, or the site returns non‑JWT tokens).
-- Tokens expire every hour and you’d rather copy one cookie than refresh tokens repeatedly.
-- You prefer to work from an already‑authenticated browser session.
-
-How to obtain and use it:
-1. Log in to `https://photos.shutterfly.com` in your browser.
-2. Open Developer Tools → Application/Storage → Cookies for `photos.shutterfly.com`.
-3. Copy the `_thislife_session` cookie’s value.
-4. Provide it to the script as your token, including the cookie name. For example:
-   - Environment: `export SHUTTERFLY_TOKEN="_thislife_session=<cookie_value>"`
-   - Or paste when the script prompts for a token.
-
-Requirements and caveats:
-- You must also provide your `LIFE_UID` because the cookie does not include it. Either set `export LIFE_UID=your_uid` or the script will prompt.
-- The script URL‑decodes the cookie automatically; just paste the raw value you copied.
-- Cookies can still expire. If a long run outlives the cookie, place the new value in `token.txt` or paste it when prompted; the script will resume.
-- Treat the cookie like a password; anyone with it can read your photos.
-
-Example (cookie auth):
 ```bash
-export SHUTTERFLY_TOKEN="_thislife_session=REDACTED"
-export LIFE_UID=027012345678
-python downloader.py --count-only
+export SHUTTERFLY_TOKEN="_thislife_session=your_cookie_value_here"
+export LIFE_UID=your_uid_here   # Required for cookie auth
 ```
 
-### Access Token (Also supported)
+`LIFE_UID` is always required with cookie auth because the cookie doesn't contain it.
 
-You can get a token by logging into the Shutterfly site, opening the network tab in the browser's developer tools, navigating to the photos page, and finding the request that fetches the albums. The token is in the request headers. You can also find it in the body of other requests. It lasts for ~1 hour, so you may need to get a new one if you're downloading a lot of photos.
+> **Note:** Treat both tokens and cookies like passwords — anyone with them can access your photos.
 
-- If you authenticate with a `_thislife_session` cookie, you must provide `LIFE_UID` (via env or prompt) because the UID is not present in cookie claims.
-- If you authenticate with an access token, the UID is read from the token claims and `LIFE_UID` is optional.
+### Managing credentials
+
+I found it easiest to put both values in a `.env` file in the repo root:
+
+```
+SHUTTERFLY_TOKEN=eyJr...
+LIFE_UID=100123456789
+```
+
+The `.env` file is gitignored so it won't be committed.
 
 ## Usage
 
-You can run the script in many different modes. The main is downloading:
+### Recommended workflow
+
+1. **Count** — understand the scope:
+   ```bash
+   python downloader.py --count-only
+   ```
+
+2. **Download** — let it run. If the token expires, refresh it (easiest via `token.txt`):
+   ```bash
+   python downloader.py
+   ```
+
+3. **Speed up** — use parallel downloads (tested safely up to 50):
+   ```bash
+   python downloader.py --parallel-workers 50
+   ```
+
+4. **Resume** — if it stopped, pick up where you left off:
+   ```bash
+   python downloader.py --resume-from "Album Name"
+   ```
+
+5. **Compare** — check local vs server to find gaps:
+   ```bash
+   python downloader.py --compare
+   ```
+
+6. **Fix gaps** — redownload any incomplete albums:
+   ```bash
+   python downloader.py --fix-incomplete
+   ```
+
+7. **Dedupe** — remove exact duplicates:
+   ```bash
+   python downloader.py --dedupe --thorough
+   ```
+
+### All options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--token`, `-t` | Auth token (or set `SHUTTERFLY_TOKEN` env var) | — |
+| `--output-dir`, `-o` | Output directory | `shutterfly_photos` |
+| `--rate-limit`, `-r` | Delay between requests (seconds) | `0.1` |
+| `--parallel-workers`, `-p` | Max parallel downloads | `1` |
+| `--count-only`, `-c` | Count albums/photos without downloading | — |
+| `--compare` | Compare local downloads vs server | — |
+| `--album`, `-a` | Download a single album by name | — |
+| `--fix-incomplete` | Redownload albums with missing photos | — |
+| `--resume-from` | Resume from a specific album name | — |
+| `--ignore-albums` | Space-separated album names to skip | — |
+| `--dedupe` | Find and remove duplicate photos | — |
+| `--thorough` | Dedupe all albums (even correctly-sized ones) | — |
+
+### Examples
 
 ```bash
-python downloader.py
-```
-
-Though I find it easiest to use in this order:
-1. First just count to understand the scope and how much time it will take with whatever rate limit you want to use:
-```bash
-python downloader.py --count-only
-```
-2. Run it in regular mode until it breaks or something happens. Refresh the token if it prompts you, easiest way is to put it in a `token.txt` file. Note the album that it stops on if it stops:
-```bash
-python downloader.py
-```
-3. For faster downloads, specify a maximum number of parallel downloads (the default is 1 - no parallel downloads). This has been safely tested up to 50. 
-```bash
-python downloader.py --parallel-workers 50
-```
-4. If it stopped and you want to resume:
-```bash
-python downloader.py --resume-from <album name>
-```
-5. If you can't remember where it stopped, get some stats on local vs remote:
-```bash
-python downloader.py --compare
-```
-6. After it finishes, do a full pass and redownload all incomplete albums (sometimes photos or albums just failed at some point when you weren't watching):
-```bash
-python downloader.py --fix-incomplete
-```
-7. You can give it a full dedupe to make sure you don't have duplicates:
-```bash
-python downloader.py --dedupe --thorough
-```
-
-### Command Line Options
-
-- `--token` or `-t`: Shutterfly access token (can also be set via SHUTTERFLY_TOKEN environment variable)
-- `--output-dir` or `-o`: Output directory for downloaded photos (default: shutterfly_photos)
-- `--rate-limit` or `-r`: Rate limit delay between requests in seconds (default: 1.0, but I often used 0.0 and never got throttled)
-- `--count-only` or `-c`: Only count albums and photos without downloading
-- `--compare`: Compare local downloads with server data to identify missing or incomplete albums
-- `--album` or `-a`: Download a single album by name
-- `--fix-incomplete`: Redownload all albums that have missing photos (overwrites existing files)
-- `--resume-from`: Resume downloading from a specific album name
-- `--ignore-albums`: Space-separated list of album names to ignore during download
-- `--parallel-workers` or `-p`: Maximum parallel downloads (default: 1, tested up to 50)
-- `--dedupe`: Find and remove exact duplicate photos while preserving files with different content
-- `--thorough`: When deduping, check all albums even if they have the correct number of files
-
-Examples:
-```bash
-# Download with custom output directory, parallel downloads, and rate limit
+# Custom output dir, parallel, with rate limit
 python downloader.py -t YOUR_TOKEN -o my_photos -p 50 -r 0.5
 
-# Just count albums and photos
-python downloader.py -t YOUR_TOKEN --count-only
+# Download one album
+python downloader.py --album "Vacation 2019"
 
-# Compare local downloads with server data
-python downloader.py -t YOUR_TOKEN --compare
+# Ignore specific albums
+python downloader.py --ignore-albums "Test Album" "Duplicates"
 
-# Download a single album
-python downloader.py -t YOUR_TOKEN --album "My Vacation Photos"
-
-# Redownload all incomplete albums
-python downloader.py -t YOUR_TOKEN --fix-incomplete
-
-# Resume download from a specific album (albums are processed alphabetically so order is the same every time you run the script)
-python downloader.py -t YOUR_TOKEN --resume-from "Vacation 2023"
-
-# Ignore specific albums during download
-python downloader.py -t YOUR_TOKEN --ignore-albums "Test Album" "Duplicates"
-
-# Find and remove duplicate photos
-python downloader.py --dedupe
-
-# Thorough duplicate check across all albums
+# Dedupe only (no token needed)
 python downloader.py --dedupe --thorough
-
-# Use token from environment variable
-export SHUTTERFLY_TOKEN=your_token_here
-python downloader.py --count-only
 ```
 
 ## Comparing Local and Server Data
 
-You can use the `--compare` option to check if your local downloads match what's on the server. This will:
-- Compare the number of photos in each album
-- Identify albums that are missing locally
-- Find any local albums that don't exist on the server
-- Show total photo count differences
+The `--compare` option checks if your local downloads match the server:
 
-The comparison takes into account filename sanitization (removal of special characters) to ensure accurate matching between local and server album names.
+- Compares photo counts per album
+- Identifies missing or incomplete albums
+- Finds local-only albums that don't exist on the server
+- Handles filename sanitization (special characters) for accurate matching
 
 ## Deduplication
 
-The `--dedupe` option helps you find and remove duplicate photos while preserving unique content:
-- Compares files by size, content, and pixel data for images
-- Preserves files that have the same name but different content
-- Reports statistics about duplicates found
-- Can run in thorough mode (`--thorough`) to check all albums regardless of photo count
+The `--dedupe` option removes exact duplicate photos while preserving unique content:
 
-The deduplication process:
-1. First checks file names for approximate matches (e.g. "IMG_1234.jpg" and "IMG_1234 1.jpg")
-2. First checks file sizes (fast comparison)
-3. If sizes match, compares file contents
-4. For image files, compares actual pixel data
-5. Handles EXIF orientation correctly
-6. Provides detailed statistics about types of duplicates found
+1. Finds files with similar names (e.g. `IMG_1234.jpg` and `IMG_1234_1.jpg`)
+2. Compares file sizes (fast check)
+3. If sizes match, compares raw file contents
+4. For images, compares actual pixel data (handles EXIF orientation)
+5. Only removes files that are truly identical — different content is always kept
+
+Use `--thorough` to check all albums, even ones with the expected number of files.
 
 ## Testing
 
-This repo includes a pytest suite which autoruns on PRs. If you want to run it yourself:
-
-- Install deps (with dev tools):
 ```bash
 pipenv install --dev
-```
-
-- Run the full test suite:
-```bash
 pipenv run pytest
 ```
 
-- Run a single test or file:
-```bash
-pipenv run pytest tests/test_albums.py::test_get_albums_with_realshape
-```
-
-Notes:
-- Tests validate request/response shapes, moment parsing, URL building, duplicate filename handling, compare output, and dedupe behavior.
-- CI runs the suite on PRs via GitHub Actions (`.github/workflows/ci.yml`).
+Tests cover request/response shapes, moment parsing, URL building, duplicate handling, compare output, and dedupe behavior. CI runs automatically on PRs via GitHub Actions.
