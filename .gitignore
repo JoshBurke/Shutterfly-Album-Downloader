@@ -4,4 +4,4 @@ shutterfly_photos/
 token.txt
 foldernames.txt
 ignore_albums.txt
-rename_folders.py
+rename_folders.py__pycache__/
