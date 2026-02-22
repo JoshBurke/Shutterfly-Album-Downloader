@@ -17,8 +17,9 @@ class TokenExpiredError(Exception):
     pass
 
 class ShutterflyDownloader:
-    def __init__(self, access_token, output_dir="downloads", rate_limit_delay=0.1, max_retries=3, ignore_albums=None, max_parallel_workers=1):
+    def __init__(self, access_token, output_dir="downloads", rate_limit_delay=0.1, max_retries=3, ignore_albums=None, max_parallel_workers=1, verbose=False):
         self.access_token = access_token
+        self.verbose = verbose
         self.output_dir = Path(output_dir)
         self.rate_limit_delay = rate_limit_delay
         self.max_retries = max_retries
@@ -39,6 +40,14 @@ class ShutterflyDownloader:
         
         # Parse token to extract claims and expiration
         self.claims, self.token_expiry = self._parse_token(self.access_token)
+        self._debug(f"Token type: {'cookie' if self._is_cookie_auth else 'JWT' if '.' in self.access_token else 'other'}")
+        self._debug(f"Token expiry: {self.token_expiry}")
+        self._debug(f"Claims keys: {list(self.claims.keys())}")
+
+    def _debug(self, msg):
+        """Print a debug message when verbose mode is enabled."""
+        if self.verbose:
+            print(f"[DEBUG] {msg}")
         
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -134,7 +143,16 @@ class ShutterflyDownloader:
                 if 'json' in kwargs:
                     kwargs['data'] = json.dumps(kwargs.pop('json'))
 
+                self._debug(f"Request: {method.upper()} {url}")
+                if 'data' in kwargs:
+                    self._debug(f"Payload: {kwargs['data'][:500]}")
+
                 response = getattr(self.session, method)(url, headers=req_headers, **kwargs)
+
+                self._debug(f"Response: {response.status_code}")
+                if not response.ok:
+                    self._debug(f"Response body: {response.text[:500]}")
+
                 response.raise_for_status()
                 
                 return response
@@ -189,11 +207,13 @@ class ShutterflyDownloader:
         # Environment variable always wins
         uid = os.environ.get('LIFE_UID')
         if uid:
+            self._debug(f"User ID from LIFE_UID env: {uid}")
             return uid
         
         # Try extracting from token claims
         uid = self.claims.get('sfly_uid')
         if uid:
+            self._debug(f"User ID from token claims (sfly_uid): {uid}")
             return uid
         
         # For cookie auth we must have a UID — prompt as last resort
@@ -235,7 +255,9 @@ class ShutterflyDownloader:
         response = self.make_request('post', url, json=payload)
         data = response.json()
         
+        self._debug(f"getAlbums response: success={data['result']['success']}")
         if not data['result']['success']:
+            self._debug(f"getAlbums error: {data['result']}")
             raise Exception(f"Failed to get albums: {data['result'].get('message', 'Unknown error')}")
         
         albums = []
@@ -960,6 +982,8 @@ def main():
                        help='Find and remove exact duplicate photos (keeps files with different content)')
     parser.add_argument('--thorough', action='store_true',
                        help='When deduping, check all albums even if they have the correct number of files')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                       help='Enable debug logging (shows requests, responses, token info)')
     
     args = parser.parse_args()
     
@@ -973,7 +997,8 @@ def main():
         output_dir=args.output_dir,
         rate_limit_delay=args.rate_limit,
         ignore_albums=args.ignore_albums,
-        max_parallel_workers=args.parallel_workers
+        max_parallel_workers=args.parallel_workers,
+        verbose=args.verbose,
     )
     
     if args.dedupe:
