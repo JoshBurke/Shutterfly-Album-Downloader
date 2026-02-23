@@ -4,7 +4,7 @@ A Python script that bulk-downloads all albums and photos from Shutterfly using 
 
 I reverse-engineered this from the site's network traffic. It's not documented and may change at any time (Shutterfly is incentivized to prevent bulk downloads), but it has held up so far. If it breaks, open an issue.
 
-I built it for my girlfriend's mom, whose photos are being held ransom by Shutterfly — they make her buy something every year or they delete them, and they don't offer a good way to bulk download. If you're here, chances are you're in a similar situation.
+I built it for my girlfriend's mom, whose photos were being held ransom by Shutterfly. They make her buy something every year or they delete them, and they don't offer a good way to bulk download. If you're here, chances are you're in a similar situation.
 
 ## Requirements
 
