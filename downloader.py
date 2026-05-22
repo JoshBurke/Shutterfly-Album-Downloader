@@ -7,10 +7,14 @@ import base64
 from datetime import datetime, timedelta
 import random
 import argparse
+import uuid
 from PIL import Image
 import numpy as np
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Static API key embedded in the Shutterfly web app (photos-api3.shutterfly.com)
+PHOTOS_API_KEY = 'zlrHU7h6cTGTApk3IbOU0aVuxlEJkPeA'
 
 class TokenExpiredError(Exception):
     pass
@@ -187,27 +191,48 @@ class ShutterflyDownloader:
                 print(f"Unexpected error: {str(e)}")
                 raise
 
+    def get_life_uid(self):
+        """Auto-discover the user's ThisLife UID via photos-api3 getStartupInfo."""
+        url = 'https://photos-api3.shutterfly.com/photos/json?method=getStartupInfo'
+        payload = {
+            "method": "getStartupInfo",
+            "params": [self.access_token, None, None, True, True],
+            "id": None
+        }
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Authorization': f'Bearer {self.access_token}',
+            'x-api-key': PHOTOS_API_KEY,
+            'Sfly-transactionId': str(uuid.uuid4()),
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Origin': 'https://photos3.shutterfly.com',
+        }
+        response = self.session.post(url, data=json.dumps(payload), headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        try:
+            life_uid = data['result']['payload']['person']['life_permissions'][0]['life']['uid']
+        except (KeyError, IndexError, TypeError) as e:
+            raise Exception(f"Failed to auto-discover life_uid from getStartupInfo: {e}")
+        if os.environ.get('DEBUG'):
+            print(f"DEBUG: Auto-discovered life_uid: {life_uid}")
+        return life_uid
+
     def get_albums(self):
         """Fetch all albums from Shutterfly"""
         url = 'https://cmd.thislife.com/json?method=album.getAlbums'
-        
-        # Get the user ID from various possible sources
-        # Use the user ID from browser session (70024945169) or fallback to claims
-        user_id = os.environ.get('LIFE_UID') or "70024945169" or self.claims.get('sfly_uid') or self.claims.get('IDs', {}).get('deviceID')
+
+        user_id = os.environ.get('LIFE_UID') or self.get_life_uid()
         
         if os.environ.get('DEBUG'):
-            print(f"DEBUG: Using user_id: {user_id}")
-            print(f"DEBUG: Available claims keys: {list(self.claims.keys())}")
-            if 'sfly_uid' in self.claims:
-                print(f"DEBUG: sfly_uid from claims: {self.claims['sfly_uid']}")
-            if 'sfly3_uid' in self.claims:
-                print(f"DEBUG: sfly3_uid from claims: {self.claims['sfly3_uid']}")
-        
+            print(f"DEBUG: Using life_uid: {user_id}")
+
         payload = {
             "method": "album.getAlbums",
             "params": [
                 self.access_token,
-                user_id, # These are the same for new accounts but different for pre-2013 accounts
+                user_id,
                 None,
                 None,
                 True
