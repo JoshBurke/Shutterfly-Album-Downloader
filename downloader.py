@@ -8,10 +8,14 @@ from datetime import datetime, timedelta
 import urllib.parse
 import random
 import argparse
+import uuid
 from PIL import Image
 import numpy as np
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Static API key embedded in Shutterfly's web app (photos-api3.shutterfly.com)
+PHOTOS_API_KEY = 'zlrHU7h6cTGTApk3IbOU0aVuxlEJkPeA'
 
 class TokenExpiredError(Exception):
     pass
@@ -188,20 +192,49 @@ class ShutterflyDownloader:
                 raise
 
     def _resolve_user_id(self):
-        """Resolve the Shutterfly user ID from env or token claims."""
-        # Environment variable always wins
+        """Resolve the user's ThisLife UID.
+
+        The ``cmd.thislife.com`` API requires the internal ThisLife UID which
+        is *different* from the regular Shutterfly account UID stored in the
+        JWT claims (``sfly_uid``).  We auto-discover it from the
+        ``photos-api3`` startup endpoint so the caller never needs to set
+        ``LIFE_UID`` manually.
+        """
         uid = os.environ.get('LIFE_UID')
         if uid:
             self._debug(f"User ID from LIFE_UID env: {uid}")
             return uid
-        
-        # Try extracting from token claims
-        uid = self.claims.get('sfly_uid')
-        if uid:
-            self._debug(f"User ID from token claims (sfly_uid): {uid}")
-            return uid
-        
-        return None
+
+        return self._fetch_life_uid()
+
+    def _fetch_life_uid(self):
+        """Auto-discover the ThisLife UID via photos-api3 getStartupInfo."""
+        url = 'https://photos-api3.shutterfly.com/photos/json?method=getStartupInfo'
+        payload = json.dumps({
+            "method": "getStartupInfo",
+            "params": [self.access_token, None, None, True, True],
+            "id": None,
+        })
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Authorization': f'Bearer {self.access_token}',
+            'x-api-key': PHOTOS_API_KEY,
+            'Sfly-transactionId': str(uuid.uuid4()),
+            'User-Agent': ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                           'AppleWebKit/605.1.15 (KHTML, like Gecko) '
+                           'Version/18.5 Safari/605.1.15'),
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Origin': 'https://photos3.shutterfly.com',
+        }
+        response = self.session.post(url, data=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        try:
+            uid = data['result']['payload']['person']['life_permissions'][0]['life']['uid']
+        except (KeyError, IndexError, TypeError) as exc:
+            raise Exception(f"Failed to auto-discover ThisLife UID: {exc}") from exc
+        self._debug(f"Auto-discovered ThisLife UID: {uid}")
+        return uid
 
     def get_albums(self):
         """Fetch all albums from Shutterfly"""
