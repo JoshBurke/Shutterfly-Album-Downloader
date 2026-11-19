@@ -8,7 +8,7 @@ I built it for my girlfriend's mom, whose photos were being held ransom by Shutt
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.9 (required by the project's Pipfile)
 - Pipenv (`pip install pipenv`)
 
 ## Quick Start
@@ -17,7 +17,10 @@ I built it for my girlfriend's mom, whose photos were being held ransom by Shutt
 git clone https://github.com/JoshBurke/Shutterfly-Album-Downloader.git
 cd Shutterfly-Album-Downloader
 pipenv install
+pipenv run python downloader.py --help
 ```
+
+Use `pipenv run python` for the commands below so they use the same environment as `pipenv install`. If you see `ModuleNotFoundError: No module named 'requests'`, rerun the two Pipenv commands above from the repository directory. A plain `python` or `python3` command may use a different environment, even if `requests` is installed elsewhere.
 
 Then get your access token (see below) and run:
 
@@ -84,37 +87,37 @@ The `.env` file is gitignored so it won't be committed.
 
 1. **Count** — understand the scope:
    ```bash
-   python downloader.py --count-only
+   pipenv run python downloader.py --count-only
    ```
 
 2. **Download** — let it run. If the token expires, refresh it (easiest via `token.txt`):
    ```bash
-   python downloader.py
+   pipenv run python downloader.py
    ```
 
 3. **Speed up** — use parallel downloads (tested safely up to 50):
    ```bash
-   python downloader.py --parallel-workers 50
+   pipenv run python downloader.py --parallel-workers 50
    ```
 
 4. **Resume** — if it stopped, pick up where you left off:
    ```bash
-   python downloader.py --resume-from "Album Name"
+   pipenv run python downloader.py --resume-from "Album Name"
    ```
 
 5. **Compare** — check local vs server to find gaps:
    ```bash
-   python downloader.py --compare
+   pipenv run python downloader.py --compare
    ```
 
 6. **Fix gaps** — redownload any incomplete albums:
    ```bash
-   python downloader.py --fix-incomplete
+   pipenv run python downloader.py --fix-incomplete
    ```
 
 7. **Dedupe** — remove exact duplicates:
    ```bash
-   python downloader.py --dedupe --thorough
+   pipenv run python downloader.py --dedupe --thorough
    ```
 
 ### All options
@@ -139,19 +142,19 @@ The `.env` file is gitignored so it won't be committed.
 
 ```bash
 # Custom output dir, parallel, with rate limit
-python downloader.py -t YOUR_TOKEN -o my_photos -p 50 -r 0.5
+pipenv run python downloader.py -t YOUR_TOKEN -o my_photos -p 50 -r 0.5
 
 # Download one album
-python downloader.py --album "Vacation 2019"
+pipenv run python downloader.py --album "Vacation 2019"
 
 # Ignore specific albums
-python downloader.py --ignore-albums "Test Album" "Duplicates"
+pipenv run python downloader.py --ignore-albums "Test Album" "Duplicates"
 
 # Dedupe only (no token needed)
-python downloader.py --dedupe --thorough
+pipenv run python downloader.py --dedupe --thorough
 
 # Debug a failing request
-python downloader.py -v --count-only
+pipenv run python downloader.py -v --count-only
 ```
 
 ## Comparing Local and Server Data
